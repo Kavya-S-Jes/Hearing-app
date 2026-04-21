@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// ─── Load xlsx-js-style for colored Excel export (supports cell styling) ────────
+if (!window._xlsxStyleLoaded) {
+  window._xlsxStyleLoaded = true;
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js";
+  s.onload = () => { window._xlsxStyleReady = true; };
+  document.head.appendChild(s);
+}
+
 const API_BASE  = "http://127.0.0.1:8000";
 const PAGE_SIZE = 100;
 
@@ -47,6 +56,7 @@ const ALL_USERS = [
   { username: "ravikumar.duraisamy",  password: "test@123", isAdmin: false },
   { username: "praveenkp",            password: "test@123", isAdmin: false },
   { username: "dinesha",              password: "test@123", isAdmin: false },
+  { username: "spartaxx_user",        password: "spdx@123", isAdmin: false },
 ];
 
 // ─── Column definitions ───────────────────────────────────────────────────────
@@ -117,6 +127,8 @@ const MLS_DEFAULTS = {
 function formatVal(val) {
   if (val === null || val === undefined) return "";
   if (typeof val === "boolean") return val ? "Yes" : "No";
+  if (val === "true")  return "Yes";
+  if (val === "false") return "No";
   if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}T/.test(val)) return val.split("T")[0];
   return String(val);
 }
@@ -171,6 +183,21 @@ function computeHB201Columns(row) {
   return { codedStatus, aofaStatus, hbStatus };
 }
 
+// Returns 0=normal, 1=urgent(red 0-2d), 2=reminder(orange 3-5d), 3=scheduled(green >5d)
+function getRowCategory(row) {
+  const dateStr = row["FormalHearingDate"];
+  if (!dateStr) return 0;
+  const hearingDate = new Date(dateStr.split("T")[0]);
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  hearingDate.setHours(0,0,0,0);
+  const diff = Math.ceil((hearingDate - today) / (1000*60*60*24));
+  if (diff >= 0 && diff <= 2) return 1;
+  if (diff >= 3 && diff <= 5) return 2;
+  if (diff > 5)               return 3;
+  return 0;
+}
+
 function getRowColor(row, index) {
   const dateStr = row["FormalHearingDate"];
   if (!dateStr) return index % 2 === 0 ? "#fff" : "#f8fafc";
@@ -211,6 +238,17 @@ function getReminderRows(hearings, days = 5) {
 
 function buildCSV(hearings, hb201Mode = false) {
   const bom = "\uFEFF";
+  // Force these columns as Excel text (="value") to prevent scientific notation
+  const TEXT_COLS = new Set(["accountnumber", "clientnumber", "zipcode", "cityid"]);
+  const csvCell = (key, val) => {
+    if (TEXT_COLS.has(key)) {
+      // Prefix with tab so Excel treats as text — no quotes shown, leading zeros preserved
+      const raw = (val === null || val === undefined) ? "" : String(val);
+      return '"\t' + raw.replace(/"/g, '""') + '"';
+    }
+    const v = formatVal(val).replace(/"/g, '""');
+    return '"' + v + '"';
+  };
 
   if (hb201Mode) {
     // HB201 mode: insert computed columns at correct positions
@@ -230,7 +268,7 @@ function buildCSV(hearings, hb201Mode = false) {
         if (c.key === "__hbStatus")    return `"${hbStatus}"`;
         if (c.key === "__aofaStatus")  return `"${aofaStatus}"`;
         if (c.key === "__codedStatus") return `"${codedStatus}"`;
-        return `"${formatVal(row[c.key]).replace(/"/g,'""')}"`; 
+        return csvCell(c.key, row[c.key]);
       }).join(",");
     });
     return bom + [header, ...rows].join("\n");
@@ -239,13 +277,120 @@ function buildCSV(hearings, hb201Mode = false) {
   // Normal mode
   const header = COLUMNS.map(c => `"${c.label}"`).join(",");
   const rows   = hearings.map(row =>
-    COLUMNS.map(c => `"${formatVal(row[c.key]).replace(/"/g,'""')}"`).join(",")
+    COLUMNS.map(c => csvCell(c.key, row[c.key])).join(",")
   );
   return bom + [header, ...rows].join("\n");
 }
+// ─── Build & download colored XLSX using xlsx-js-style ───────────────────────
+function downloadColoredXLSX(hearings, county, hb201Mode = false) {
+  const XLSXs = window.XLSX;
+  if (!XLSXs || !window._xlsxStyleReady) {
+    alert("Excel library still loading... please wait 3 seconds and try again.");
+    return false;
+  }
+
+  const TEXT_COLS_XL = new Set(["accountnumber", "clientnumber", "zipcode", "cityid"]);
+
+  // Build column list
+  let cols = [...COLUMNS];
+  if (hb201Mode) {
+    const hb201Cols = [];
+    for (const col of COLUMNS) {
+      hb201Cols.push(col);
+      if (col.key === "CADEvidenceScanDate") hb201Cols.push({ key: "__hbStatus",  label: "HB Status" });
+      if (col.key === "ExpiryDate")          hb201Cols.push({ key: "__aofaStatus",label: "A of A Status" });
+      if (col.key === "DateCoded")           hb201Cols.push({ key: "__codedStatus",label: "Coded Status" });
+    }
+    cols = hb201Cols;
+  }
+
+  // Category → fill & font colors (ARGB for xlsx-js-style)
+  const CAT_STYLE = {
+    0: { bg: "FFFFFFFF", fc: "FF333333" },
+    1: { bg: "FFFFF1F2", fc: "FF991B1B" },  // red   urgent 0-2d
+    2: { bg: "FFFFF7ED", fc: "FF9A3412" },  // orange reminder 3-5d
+    3: { bg: "FFF0FDF4", fc: "FF166534" },  // green scheduled >5d
+  };
+
+  // Header style
+  const HDR_STYLE = {
+    font:      { bold: true, color: { rgb: "FFFFFF" }, sz: 11, name: "Arial" },
+    fill:      { fgColor: { rgb: "1E1B4B" }, patternType: "solid" },
+    alignment: { horizontal: "center", vertical: "center", wrapText: false },
+    border:    { bottom: { style: "thin", color: { rgb: "6366F1" } } },
+  };
+
+  const ws = {};
+  const range = { s: { r: 0, c: 0 }, e: { r: hearings.length, c: cols.length - 1 } };
+
+  // ── Header row ──────────────────────────────────────────────────────────────
+  cols.forEach((col, ci) => {
+    const ref = XLSXs.utils.encode_cell({ r: 0, c: ci });
+    ws[ref] = { v: col.label, t: "s", s: HDR_STYLE };
+  });
+
+  // ── Data rows ────────────────────────────────────────────────────────────────
+  hearings.forEach((row, ri) => {
+    const cat = getRowCategory(row);
+    const { bg, fc } = CAT_STYLE[cat];
+
+    const rowFill  = { fgColor: { rgb: bg.slice(2) }, patternType: "solid" };
+    const rowFont  = { color: { rgb: fc.slice(2) }, sz: 10, name: "Arial" };
+    const rowBorder = { bottom: { style: "hair", color: { rgb: "E2E8F0" } } };
+
+    let hbStatus, aofaStatus, codedStatus;
+    if (hb201Mode) ({ codedStatus, aofaStatus, hbStatus } = computeHB201Columns(row));
+
+    cols.forEach((col, ci) => {
+      let rawVal;
+      if (col.key === "__hbStatus")        rawVal = hbStatus;
+      else if (col.key === "__aofaStatus") rawVal = aofaStatus;
+      else if (col.key === "__codedStatus")rawVal = codedStatus;
+      else rawVal = row[col.key];
+
+      const isText = TEXT_COLS_XL.has(col.key);
+      const displayVal = isText
+        ? (rawVal === null || rawVal === undefined ? "" : String(rawVal))
+        : (formatVal(rawVal) || "—");
+
+      const ref = XLSXs.utils.encode_cell({ r: ri + 1, c: ci });
+      ws[ref] = {
+        v: displayVal, t: "s",
+        s: {
+          fill:      rowFill,
+          font:      rowFont,
+          border:    rowBorder,
+          alignment: { vertical: "center" },
+          ...(isText ? { numFmt: "@" } : {}),
+        },
+      };
+    });
+  });
+
+  ws["!ref"]  = XLSXs.utils.encode_range(range);
+  ws["!cols"] = cols.map(c => ({ wch: Math.max((c.label || "").length + 4, 16) }));
+
+  const wb = XLSXs.utils.book_new();
+  XLSXs.utils.book_append_sheet(wb, ws, "Hearings");
+
+  const today = new Date().toISOString().split("T")[0];
+  const fname = hb201Mode
+    ? `HB201_Evidence_${county || "All"}_${today}.xlsx`
+    : `hearings_${county || "all"}_${today}.xlsx`;
+
+  XLSXs.writeFile(wb, fname, { cellStyles: true, bookType: "xlsx" });
+  return true;
+}
+
 function downloadExcel(hearings, county, hb201Mode = false) {
-  const today   = new Date().toISOString().split("T")[0];
-  const fname   = hb201Mode
+  // Try colored XLSX first, fallback to CSV
+  try {
+    const ok = downloadColoredXLSX(hearings, county, hb201Mode);
+    if (ok) return;
+  } catch(e) {}
+  // CSV fallback
+  const today = new Date().toISOString().split("T")[0];
+  const fname = hb201Mode
     ? `HB201_Evidence_${county || "All"}_${today}.csv`
     : `hearings_${county || "all"}_${today}.csv`;
   const csv  = buildCSV(hearings, hb201Mode);
@@ -255,6 +400,7 @@ function downloadExcel(hearings, county, hb201Mode = false) {
   a.href = url; a.download = fname; a.click();
   URL.revokeObjectURL(url);
 }
+
 async function downloadAllExcel(filters, county, hb201Mode = false) {
   const p = new URLSearchParams();
   if (filters.county)                            p.set("county", filters.county);
@@ -341,6 +487,10 @@ const iStyle = {
 };
 
 function FilterSelect({ label, value, onChange, options, placeholder = "All" }) {
+  // options can be plain strings OR objects { value, label }
+  const normalised = options.map(o =>
+    typeof o === "object" ? o : { value: o, label: o }
+  );
   return (
     <div>
       <label style={{ fontSize:10, color:"#94a3b8", display:"block", marginBottom:3, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>
@@ -348,7 +498,7 @@ function FilterSelect({ label, value, onChange, options, placeholder = "All" }) 
       </label>
       <select value={value} onChange={e => onChange(e.target.value)} style={iStyle}>
         <option value="">{placeholder}</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
+        {normalised.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
   );
@@ -419,6 +569,53 @@ function paginationBtnStyle(disabled) {
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.6 : 1,
   };
+}
+
+// ─── Gate Login (full-page, no close button) ─────────────────────────────────
+function GateLogin({ onSuccess, users }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  const handleLogin = () => {
+    setLoading(true); setError("");
+    setTimeout(() => {
+      const user = users.find(u => u.username === username.trim() && u.password === password);
+      if (user) { onSuccess(user); }
+      else { setError("Invalid username or password."); setLoading(false); }
+    }, 400);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:14 }}>
+        <label style={{ fontSize:11, color:"#64748b", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Username</label>
+        <input value={username} onChange={e => setUsername(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleLogin()}
+          placeholder="Enter username"
+          style={{ ...iStyle, marginTop:5 }} autoFocus />
+      </div>
+      <div style={{ marginBottom:18 }}>
+        <label style={{ fontSize:11, color:"#64748b", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Password</label>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleLogin()}
+          placeholder="••••••••"
+          style={{ ...iStyle, marginTop:5 }} />
+      </div>
+      {error && (
+        <div style={{ background:"#fef2f2", color:"#dc2626", borderRadius:8, padding:"9px 13px", fontSize:12, marginBottom:14, border:"1px solid #fecaca" }}>
+          ⚠️ {error}
+        </div>
+      )}
+      <button onClick={handleLogin} disabled={loading || !username || !password}
+        style={{ width:"100%", padding:"12px 0", borderRadius:12, border:"none",
+          background: loading ? "#a5b4fc" : "linear-gradient(135deg,#4f46e5,#7c3aed)",
+          color:"#fff", fontWeight:700, fontSize:15, cursor: loading ? "not-allowed" : "pointer" }}>
+        {loading ? "Verifying..." : "Login →"}
+      </button>
+    </div>
+  );
 }
 
 // ─── Feature 2: Login Modal ───────────────────────────────────────────────────
@@ -720,7 +917,7 @@ export default function HearingApp() {
   const [counties, setCounties]         = useState([]);
   const [filterOpts, setFilterOpts]     = useState({
     hearingResolutionIds: [], protestCodes: [], protestReasons: [],
-    hearingStatuses: [], hearingFinalized: ["true","false"],
+    hearingStatuses: [], hearingFinalized: [{ value: "true", label: "Yes" }, { value: "false", label: "No" }, { value: "(blank)", label: "Blanks" }],
     codedStatus: ["Coded","Not Coded"], aofaStatus: ["Valid A of A","Expired","No A of A"],
   });
   const [loading, setLoading]           = useState(false);
@@ -768,7 +965,14 @@ export default function HearingApp() {
 
   useEffect(() => {
     fetch(`${API_BASE}/counties`).then(r => r.json()).then(setCounties).catch(() => {});
-    fetch(`${API_BASE}/filter-options`).then(r => r.json()).then(setFilterOpts).catch(() => {});
+    fetch(`${API_BASE}/filter-options`).then(r => r.json()).then(data => {
+      setFilterOpts(prev => ({
+        ...prev,
+        ...data,
+        // Always keep Yes/No/Blanks labels regardless of what backend returns
+        hearingFinalized: [{ value: "true", label: "Yes" }, { value: "false", label: "No" }, { value: "(blank)", label: "Blanks" }],
+      }));
+    }).catch(() => {});
   }, []);
 
   const fetchHearings = useCallback(async (pageNum = 1) => {
@@ -824,14 +1028,14 @@ export default function HearingApp() {
     } finally { setLoading(false); }
   }, []);
 
-  // MLS Filter click → always show login modal first
+  // MLS Filter click → show login modal (MLS-specific login)
   const handleMLSClick = () => {
     if (mlsActive) {
       setHearingResolutionId([]); setProtestCode([]); setProtestReason("");
       setHearingFinalized(""); setHearingStatus("");
       setCodedStatus([]); setAofaStatus([]);
       setStartDate(""); setEndDate("");
-      setMlsActive(false); setCurrentUser(null);
+      setMlsActive(false);
       return;
     }
     setShowLogin(true);
@@ -861,6 +1065,7 @@ export default function HearingApp() {
     }), 0);
   };
 
+  // Called when user logs in via the MLS modal (HB201 button flow)
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
     setShowLogin(false);
@@ -892,8 +1097,37 @@ export default function HearingApp() {
   const handleDownloadAll = async () => {
     setExporting(true);
     try {
-      const count = await downloadAllExcel(filterRef.current, county, mlsActive);
-      alert(`✅ ${count.toLocaleString()} records downloaded!`);
+      // Use displayHearings (already frontend-filtered) — matches exactly what's shown on screen
+      // If only 1 page loaded, fetch all pages first then apply same frontend filter
+      if (totalPages > 1) {
+        // Multi-page: fetch all from backend then apply frontend HearingFinalized filter
+        const f = filterRef.current;
+        const p = new URLSearchParams();
+        if (f.county)                          p.set("county", f.county);
+        if (f.startDate)                       p.set("start_date", f.startDate);
+        if (f.endDate)                         p.set("end_date", f.endDate);
+        if (f.hearingResolutionId?.length > 0) p.set("hearing_resolution_id", f.hearingResolutionId.join(","));
+        if (f.protestCode?.length > 0)         p.set("protest_code", f.protestCode.join(","));
+        if (f.protestReason)                   p.set("protest_reason", f.protestReason);
+        if (f.hearingFinalized)                p.set("hearing_finalized", f.hearingFinalized);
+        if (f.hearingStatus)                   p.set("hearing_status", f.hearingStatus);
+        if (f.codedStatus?.length > 0)         p.set("coded_status", f.codedStatus.join(","));
+        if (f.aofaStatus?.length > 0)          p.set("aofa_status", f.aofaStatus.join(","));
+        const res  = await fetch(`${API_BASE}/export-all?${p}`);
+        const json = await res.json();
+        let allData = json.data;
+        // Apply same frontend HearingFinalized filter
+        const hf = f.hearingFinalized;
+        if (hf === "(blank)") allData = allData.filter(r => { const v = r["HearingFinalized"]; return v === null || v === undefined || v === ""; });
+        else if (hf === "false") allData = allData.filter(r => { const v = r["HearingFinalized"]; return (v !== null && v !== undefined && v !== "") && (v === false || v === "false" || String(v).toLowerCase() === "no"); });
+        else if (hf === "true")  allData = allData.filter(r => { const v = r["HearingFinalized"]; return v === true || v === "true" || String(v).toLowerCase() === "yes"; });
+        await downloadColoredXLSX(allData, county || "all", mlsActive);
+        alert(`✅ ${allData.length.toLocaleString()} records downloaded!`);
+      } else {
+        // Single page: displayHearings already has the correct filtered data
+        downloadExcel(displayHearings, county, mlsActive);
+        alert(`✅ ${displayHearings.length.toLocaleString()} records downloaded!`);
+      }
     } catch {
       alert("Export failed. Backend check பண்ணுங்க.");
     } finally { setExporting(false); }
@@ -903,7 +1137,31 @@ export default function HearingApp() {
     if (sortCol === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(key); setSortDir("asc"); }
   };
-  const sorted = [...hearings].sort((a, b) => {
+  // Frontend filter for Hearing Finalized:
+  // "Blanks" → only null/empty rows
+  // "No"     → only explicitly false/No rows (NOT blanks)
+  // "Yes"    → only explicitly true/Yes rows
+  // ""       → all rows (no filter)
+  const isBlank = v => v === null || v === undefined || v === "";
+  const isFalse = v => v === false || v === "false" || String(v).toLowerCase() === "no";
+  const isTrue  = v => v === true  || v === "true"  || String(v).toLowerCase() === "yes";
+
+  const displayHearings = (() => {
+    if (hearingFinalized === "(blank)") {
+      return hearings.filter(r => isBlank(r["HearingFinalized"]));
+    }
+    if (hearingFinalized === "false") {
+      // "No" selected: only rows where value is explicitly false/No (exclude blanks)
+      return hearings.filter(r => !isBlank(r["HearingFinalized"]) && isFalse(r["HearingFinalized"]));
+    }
+    if (hearingFinalized === "true") {
+      // "Yes" selected: only rows where value is explicitly true/Yes
+      return hearings.filter(r => isTrue(r["HearingFinalized"]));
+    }
+    return hearings;
+  })();
+
+  const sorted = [...displayHearings].sort((a, b) => {
     if (!sortCol) return 0;
     const av = formatVal(a[sortCol]), bv = formatVal(b[sortCol]);
     return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
@@ -919,6 +1177,23 @@ export default function HearingApp() {
   const reminderRows = getReminderRows(hearings, reminderDays);
 
   // ─── Render ────────────────────────────────────────────────────────────────
+  // ── Login Gate: block entire app until authenticated ─────────────────────
+  if (!currentUser) {
+    return (
+      <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", minHeight:"100vh", background:"linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#4f46e5 100%)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ background:"#fff", borderRadius:20, padding:"2.5rem 2rem", width:380, boxShadow:"0 30px 80px rgba(0,0,0,0.35)" }}>
+          <div style={{ textAlign:"center", marginBottom:"2rem" }}>
+            <div style={{ width:60, height:60, borderRadius:18, background:"linear-gradient(135deg,#4f46e5,#7c3aed)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", fontSize:28 }}>⚖️</div>
+            <h1 style={{ margin:0, fontSize:22, fontWeight:900, color:"#1e1b4b" }}>HB201 Hearing App</h1>
+            <p style={{ margin:"6px 0 0", fontSize:13, color:"#94a3b8" }}>Sign in to continue</p>
+          </div>
+          {/* Gate login: ONLY sets currentUser — does NOT activate MLS */}
+          <GateLogin onSuccess={(user) => setCurrentUser(user)} users={users} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ fontFamily:"'Segoe UI',system-ui,sans-serif", minHeight:"100vh", background:"#f0f4ff" }}>
 
@@ -984,56 +1259,58 @@ export default function HearingApp() {
                   👤 {currentUser.username} {currentUser.isAdmin && "👑"}
                 </span>
 
-                {/* Send to Tuan — visible only after login */}
-                <button onClick={handleSendTuan} disabled={hearings.length === 0} style={{
-                  background: hearings.length === 0 ? "rgba(255,255,255,0.1)" : "rgba(16,185,129,0.85)",
-                  border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
-                  padding:"8px 14px", cursor: hearings.length === 0 ? "not-allowed":"pointer",
-                  fontSize:12, fontWeight:700, opacity: hearings.length === 0 ? 0.5 : 1
-                }}>
-                  📧 Send to Tuan
-                </button>
+                {/* Send to Tuan — only when HB201 active */}
+                {mlsActive && (
+                  <button onClick={handleSendTuan} disabled={hearings.length === 0} style={{
+                    background: hearings.length === 0 ? "rgba(255,255,255,0.1)" : "rgba(16,185,129,0.85)",
+                    border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
+                    padding:"8px 14px", cursor: hearings.length === 0 ? "not-allowed":"pointer",
+                    fontSize:12, fontWeight:700, opacity: hearings.length === 0 ? 0.5 : 1
+                  }}>📧 Send to Tuan</button>
+                )}
 
-                {/* Send to Kavya — visible only after login */}
-                <button onClick={handleSendKavya} disabled={hearings.length === 0} style={{
-                  background: hearings.length === 0 ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.85)",
-                  border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
-                  padding:"8px 14px", cursor: hearings.length === 0 ? "not-allowed":"pointer",
-                  fontSize:12, fontWeight:700, opacity: hearings.length === 0 ? 0.5 : 1
-                }}>
-                  📧 Send to Kavya
-                </button>
+                {/* Send to Kavya — only when HB201 active */}
+                {mlsActive && (
+                  <button onClick={handleSendKavya} disabled={hearings.length === 0} style={{
+                    background: hearings.length === 0 ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.85)",
+                    border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
+                    padding:"8px 14px", cursor: hearings.length === 0 ? "not-allowed":"pointer",
+                    fontSize:12, fontWeight:700, opacity: hearings.length === 0 ? 0.5 : 1
+                  }}>📧 Send to Kavya</button>
+                )}
 
                 {currentUser.isAdmin && (
                   <button onClick={() => setShowAdminPanel(true)} style={{ background:"rgba(255,255,255,0.1)", border:"1.5px solid rgba(255,255,255,0.3)", color:"#e0e7ff", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
                     ⚙️ Admin
                   </button>
                 )}
-                <button onClick={() => { setCurrentUser(null); setMlsActive(false); }} style={{ background:"rgba(239,68,68,0.2)", border:"1px solid rgba(239,68,68,0.4)", color:"#fca5a5", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:11 }}>
+                <button onClick={() => { setCurrentUser(null); setMlsActive(false); setHearings([]); setHasFetched(false); }} style={{ background:"rgba(239,68,68,0.2)", border:"1px solid rgba(239,68,68,0.4)", color:"#fca5a5", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:11 }}>
                   Logout
                 </button>
               </div>
             )}
 
-            {/* Download current page */}
-            <button onClick={() => downloadExcel(hearings, county, mlsActive)} disabled={hearings.length === 0} style={{
-              background:"rgba(255,255,255,0.15)", border:"1.5px solid rgba(255,255,255,0.4)",
-              color:"#fff", borderRadius:10, padding:"8px 14px",
-              cursor: hearings.length === 0 ? "not-allowed":"pointer",
-              fontSize:12, fontWeight:600, opacity: hearings.length === 0 ? 0.5 : 1
-            }}>
-              ⬇️ Page ({hearings.length})
-            </button>
+            {/* Download current page — only when HB201 active */}
+            {mlsActive && (
+              <button onClick={() => downloadExcel(displayHearings, county, mlsActive)} disabled={displayHearings.length === 0} style={{
+                background:"rgba(255,255,255,0.15)", border:"1.5px solid rgba(255,255,255,0.4)",
+                color:"#fff", borderRadius:10, padding:"8px 14px",
+                cursor: hearings.length === 0 ? "not-allowed":"pointer",
+                fontSize:12, fontWeight:600, opacity: hearings.length === 0 ? 0.5 : 1
+              }}>⬇️ Page ({displayHearings.length})</button>
+            )}
 
-            {/* Download ALL */}
-            <button onClick={handleDownloadAll} disabled={!hasFetched || exporting} style={{
-              background: exporting ? "rgba(255,255,255,0.1)" : "rgba(245,158,11,0.85)",
-              border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
-              padding:"8px 14px", cursor: (!hasFetched || exporting) ? "not-allowed":"pointer",
-              fontSize:12, fontWeight:700, opacity: (!hasFetched || exporting) ? 0.5 : 1
-            }}>
-              {exporting ? "⏳ Exporting..." : `📊 Excel Download (${totalRecords.toLocaleString()})`}
-            </button>
+            {/* Download ALL — only when HB201 active */}
+            {mlsActive && (
+              <button onClick={handleDownloadAll} disabled={!hasFetched || exporting} style={{
+                background: exporting ? "rgba(255,255,255,0.1)" : "rgba(245,158,11,0.85)",
+                border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
+                padding:"8px 14px", cursor: (!hasFetched || exporting) ? "not-allowed":"pointer",
+                fontSize:12, fontWeight:700, opacity: (!hasFetched || exporting) ? 0.5 : 1
+              }}>
+                {exporting ? "⏳ Exporting..." : `📊 Excel Download (${(hearingFinalized === "(blank)" || hearingFinalized === "false" || hearingFinalized === "true") ? displayHearings.length : totalRecords.toLocaleString()})`}
+              </button>
+            )}
 
           </div>
         </div>
@@ -1045,7 +1322,7 @@ export default function HearingApp() {
         {mlsActive && (
           <div style={{ background:"#fffbeb", border:"1.5px solid #f59e0b", borderRadius:10, padding:"0.6rem 1rem", marginBottom:"0.75rem", fontSize:12, color:"#92400e", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
             <span>
-              ⚡ <strong>HB201 Evidence active</strong> — HearingResolutionId: 8, 26, blanks · ProtestCode: Protested, Protested by client · ProtestReason: blank · HearingFinalized: False · HearingStatus: blank · CodedStatus: Coded · AofAStatus: Valid A of A ·{" "}
+              ⚡ <strong>HB201 Evidence active</strong> — HearingResolutionId: 8, 26, blanks · ProtestCode: Protested, Protested by client · ProtestReason: blank · HearingFinalized: No · HearingStatus: blank · CodedStatus: Coded · AofAStatus: Valid A of A ·{" "}
               <strong>Formal Hearing Date: {getToday()} → {getDatePlusDays(25)}</strong>
             </span>
             {currentUser && (
@@ -1155,7 +1432,7 @@ export default function HearingApp() {
         {hasFetched && (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.75rem" }}>
             <span style={{ fontSize:13, color:"#64748b" }}>
-              {loading ? "Loading..." : `Showing ${hearings.length} of ${totalRecords.toLocaleString()} total records · Page ${page} of ${totalPages}`}
+              {loading ? "Loading..." : hearingFinalized === "(blank)" ? `Showing ${displayHearings.length} of ${displayHearings.length} filtered records (Blanks only)` : (hearingFinalized === "false" || hearingFinalized === "true") ? `Showing ${displayHearings.length} of ${displayHearings.length} filtered records` : `Showing ${hearings.length} of ${totalRecords.toLocaleString()} total records · Page ${page} of ${totalPages}`}
             </span>
             {!loading && hearings.length > 0 && (
               <span style={{ fontSize:11, color:"#94a3b8" }}>Click column header to sort · Scroll right for all columns</span>
