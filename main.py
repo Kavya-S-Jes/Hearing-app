@@ -27,7 +27,8 @@ def root():
 def build_extra_filters(
     county, start_date, end_date,
     hearing_resolution_id, protest_code, protest_reason,
-    hearing_finalized, hearing_status, coded_status, aofa_status
+    hearing_finalized, hearing_status, coded_status, aofa_status,
+    account_number=None, owner_name=None
 ):
     extra_filters = ""
 
@@ -68,7 +69,7 @@ def build_extra_filters(
     if hearing_finalized == "true":
         extra_filters += " AND hr.HearingFinalized = 1"
     elif hearing_finalized == "false":
-        extra_filters += " AND (hr.HearingFinalized = 0 OR hr.HearingFinalized IS NULL)"
+        extra_filters += " AND hr.HearingFinalized IS NOT NULL AND hr.HearingFinalized = 0"
     if hearing_status == "(blank)":
         extra_filters += " AND hrs.HearingStatus IS NULL"
     elif hearing_status:
@@ -88,6 +89,13 @@ def build_extra_filters(
         if "No A of A"    in as_list: as_parts.append("aof.ReceivedDate IS NULL")
         if as_parts:
             extra_filters += f" AND ({' OR '.join(as_parts)})"
+
+    if account_number:
+        acc = account_number.strip().replace("'", "''")
+        extra_filters += f" AND a.accountnumber LIKE '%{acc}%'"
+    if owner_name:
+        name = owner_name.strip().replace("'", "''")
+        extra_filters += f" AND p.CADLegalName LIKE '%{name}%'"
 
     return extra_filters
 
@@ -231,6 +239,8 @@ def get_hearings(
     hearing_status: Optional[str]        = Query(None),
     coded_status: Optional[str]          = Query(None),
     aofa_status: Optional[str]           = Query(None),
+    account_number: Optional[str]        = Query(None),
+    owner_name: Optional[str]            = Query(None),
     page: int                            = Query(1, ge=1),
     page_size: int                       = Query(100, ge=1, le=500),
 ):
@@ -240,7 +250,8 @@ def get_hearings(
     extra_filters = build_extra_filters(
         county, start_date, end_date,
         hearing_resolution_id, protest_code, protest_reason,
-        hearing_finalized, hearing_status, coded_status, aofa_status
+        hearing_finalized, hearing_status, coded_status, aofa_status,
+        account_number, owner_name
     )
 
     offset = (page - 1) * page_size
@@ -316,6 +327,8 @@ def export_all(
     hearing_status: Optional[str]        = Query(None),
     coded_status: Optional[str]          = Query(None),
     aofa_status: Optional[str]           = Query(None),
+    account_number: Optional[str]        = Query(None),
+    owner_name: Optional[str]            = Query(None),
 ):
     """Returns ALL matching records without pagination — used for full Excel export."""
     conn = get_conn()
@@ -324,7 +337,8 @@ def export_all(
     extra_filters = build_extra_filters(
         county, start_date, end_date,
         hearing_resolution_id, protest_code, protest_reason,
-        hearing_finalized, hearing_status, coded_status, aofa_status
+        hearing_finalized, hearing_status, coded_status, aofa_status,
+        account_number, owner_name
     )
 
     shared_cte = build_shared_cte(extra_filters)
@@ -569,3 +583,110 @@ def test_data():
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+
+# ── Outlook Draft with XLSX Attachment ───────────────────────────────────────
+from fastapi import Body
+from pydantic import BaseModel
+from typing import List
+import tempfile, os, base64
+
+class OutlookRequest(BaseModel):
+    to: str
+    cc: List[str]
+    subject: str
+    body: str
+    file_name: str        # e.g. Missing_HB201_Evidence_Apr22_Ellis.xlsx
+    file_b64: str         # base64-encoded xlsx bytes
+
+@app.post("/send-outlook")
+def send_outlook(req: OutlookRequest):
+    """
+    Receives XLSX (base64) + mail metadata.
+    Writes XLSX to temp file, opens Outlook draft with attachment.
+    User reviews and clicks Send manually.
+    """
+    try:
+        import win32com.client as win32
+        import pythoncom
+    except ImportError:
+        return {"ok": False, "error": "pywin32 not installed. Run: pip install pywin32"}
+
+    try:
+        # Must initialize COM on this thread (FastAPI runs on worker threads)
+        pythoncom.CoInitialize()
+
+        # Decode and write xlsx to temp folder
+        xlsx_bytes = base64.b64decode(req.file_b64)
+        tmp_path   = os.path.join(tempfile.gettempdir(), req.file_name)
+        with open(tmp_path, "wb") as f:
+            f.write(xlsx_bytes)
+
+        # Open Outlook draft
+        outlook = win32.Dispatch("Outlook.Application")
+        mail    = outlook.CreateItem(0)   # olMailItem
+        mail.To      = req.to
+        mail.CC      = ";".join(req.cc)
+        mail.Subject = req.subject
+        mail.Body    = req.body
+        mail.Attachments.Add(tmp_path)
+        mail.Display()   # opens draft — user clicks Send
+
+        return {"ok": True}
+
+    except Exception as e:
+        err = str(e)
+        if "dialog box is open" in err or "-2147467259" in err:
+            return {"ok": False, "error": "Outlook-ல் ஒரு dialog box திறந்திருக்கு. Outlook-ஐ திறந்து அந்த popup-ஐ close பண்ணிட்டு மீண்டும் try பண்ணுங்கள்."}
+        return {"ok": False, "error": err}
+
+    finally:
+        try:
+            pythoncom.CoUninitialize()
+        except:
+            pass
+
+
+# ── Tuan Sent Tracking (JSON file on server) ─────────────────────────────────
+import json
+from datetime import datetime
+from pathlib import Path
+
+SENT_FILE = Path(__file__).parent / "tuan_sent.json"
+
+def load_sent() -> dict:
+    if SENT_FILE.exists():
+        try:
+            return json.loads(SENT_FILE.read_text(encoding="utf-8"))
+        except:
+            return {}
+    return {}
+
+def save_sent(data: dict):
+    SENT_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+class MarkSentRequest(BaseModel):
+    records: List[dict]   # [{ "accountnumber": "...", "county": "..." }, ...]
+    sent_by: str
+
+@app.post("/tuan-sent/mark")
+def mark_sent(req: MarkSentRequest):
+    """Mark records as sent to Tuan."""
+    data = load_sent()
+    now  = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for r in req.records:
+        key = f"{r['accountnumber']}|{r.get('county','')}"
+        data[key] = {"sent_date": now, "sent_by": req.sent_by}
+    save_sent(data)
+    return {"ok": True, "marked": len(req.records)}
+
+@app.get("/tuan-sent/list")
+def list_sent():
+    """Return all sent records as { 'accountnumber|county': { sent_date, sent_by } }"""
+    return load_sent()
+
+@app.delete("/tuan-sent/clear")
+def clear_sent():
+    """Admin: clear all sent records."""
+    save_sent({})
+    return {"ok": True}
