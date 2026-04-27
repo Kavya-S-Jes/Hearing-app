@@ -18,7 +18,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_conn():
+try:
+    import win32com.client as win32
+    import pythoncom
+    WIN32_AVAILABLE = True
+except ImportError:
+    WIN32_AVAILABLE = False
     return pymssql.connect(server=DB_SERVER, database=DB_DATABASE)
 
 
@@ -618,10 +623,7 @@ def send_outlook(req: OutlookRequest):
     Writes XLSX to temp file, opens Outlook draft with attachment.
     User reviews and clicks Send manually.
     """
-    try:
-        import win32com.client as win32
-        import pythoncom
-    except ImportError:
+    if not WIN32_AVAILABLE:
         return {"ok": False, "error": "pywin32 not installed. Run: pip install pywin32"}
 
     try:
