@@ -1,21 +1,13 @@
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from typing import Optional
 import pymssql
-from pydantic import BaseModel
-import json, tempfile, os, base64
-from datetime import datetime
-from pathlib import Path
+import os
 
 DB_SERVER   = "SPXDB"
 DB_DATABASE = "spartaxx"
-
-# ─────────────────────────────────────────────────────────────────
-# LOCAL MOCK MODE
-# True  → DB தேவையில்ல, fake data return பண்ணும் (home/local testing)
-# False → Real MSSQL DB connect ஆகும் (office use)
-# ─────────────────────────────────────────────────────────────────
-USE_MOCK = True
 
 app = FastAPI(title="Hearing Accounts API", version="1.0.0")
 
@@ -27,360 +19,26 @@ app.add_middleware(
 )
 
 def get_conn():
-    if USE_MOCK:
-        return None
     return pymssql.connect(server=DB_SERVER, database=DB_DATABASE)
 
 
-# ─── Mock Data ────────────────────────────────────────────────────
-MOCK_HEARINGS = [
-    {
-        "IsUdiAccount": 1,
-        "Countyid": 1,
-        "Countyname": "Ellis",
-        "ClientStatus": "Active",
-        "accountnumber": "1000001",
-        "CADLegalName": "SMITH JOHN",
-        "Acc.property address": "123 Main St",
-        "cityid": "WAXAHACHIE",
-        "zipcode": "75165",
-        "StartDate": "2020-01-01T00:00:00",
-        "EndDate": None,
-        "clientnumber": "C10001",
-        "OCALUC": "A1",
-        "NeighbourhoodCode": "N001",
-        "completionDateAndTime": None,
-        "accountstatusid": 1,
-        "Accountstatus": "Active",
-        "NoticedDate": "2026-03-01T00:00:00",
-        "HearingType": "Formal",
-        "HearingResolutionId": None,
-        "ProtestCodeValues": "Protested",
-        "ProtestReason": None,
-        "HearingFinalized": False,
-        "HearingStatus": None,
-        "InformalHearingDate": None,
-        "FormalHearingDate": "2026-04-25T09:00:00",
-        "CADEvidenceLetterDate": None,
-        "CADEvidenceScanDate": None,
-        "CADUEValue": 250000,
-        "CADMarketMeanValue": 260000,
-        "CADMarketMedianValue": 255000,
-        "OfferDate": None,
-        "OfferValue": None,
-        "NoticeMarketValue": 270000,
-        "NoticeTotalValue": 270000,
-        "PostHearingMarketValue": None,
-        "PostHearingTotalValue": None,
-        "ReceivedDate": "2025-06-01T00:00:00",
-        "ExpiryDate": "2027-06-01T00:00:00",
-        "DateCoded": "2026-01-15T00:00:00",
-        "OriginalDateCoded": "2026-01-15T00:00:00",
-        "DateCodedEnd": None,
-        "CodedStatus": "Coded",
-        "AofAStatus": "Valid A of A",
-        "case_id": "1000001",
-        "hearing_date": "2026-04-25T09:00:00",
-        "county": "Ellis",
-        "status": None,
-        "plaintiff": "SMITH JOHN",
-        "defendant": "C10001",
-    },
-    {
-        "IsUdiAccount": 0,
-        "Countyid": 2,
-        "Countyname": "Tarrant",
-        "ClientStatus": "Active",
-        "accountnumber": "1000002",
-        "CADLegalName": "JOHNSON MARY LLC",
-        "Acc.property address": "456 Oak Ave",
-        "cityid": "FORT WORTH",
-        "zipcode": "76101",
-        "StartDate": "2019-05-10T00:00:00",
-        "EndDate": None,
-        "clientnumber": "C10002",
-        "OCALUC": "B2",
-        "NeighbourhoodCode": "N002",
-        "completionDateAndTime": None,
-        "accountstatusid": 1,
-        "Accountstatus": "Active",
-        "NoticedDate": "2026-03-05T00:00:00",
-        "HearingType": "Formal",
-        "HearingResolutionId": 8,
-        "ProtestCodeValues": "Protested by client",
-        "ProtestReason": None,
-        "HearingFinalized": False,
-        "HearingStatus": None,
-        "InformalHearingDate": None,
-        "FormalHearingDate": "2026-04-27T10:00:00",
-        "CADEvidenceLetterDate": "2026-02-01T00:00:00",
-        "CADEvidenceScanDate": None,
-        "CADUEValue": 500000,
-        "CADMarketMeanValue": 510000,
-        "CADMarketMedianValue": 505000,
-        "OfferDate": None,
-        "OfferValue": None,
-        "NoticeMarketValue": 520000,
-        "NoticeTotalValue": 520000,
-        "PostHearingMarketValue": None,
-        "PostHearingTotalValue": None,
-        "ReceivedDate": "2025-08-01T00:00:00",
-        "ExpiryDate": "2027-08-01T00:00:00",
-        "DateCoded": "2026-02-10T00:00:00",
-        "OriginalDateCoded": "2026-02-10T00:00:00",
-        "DateCodedEnd": None,
-        "CodedStatus": "Coded",
-        "AofAStatus": "Valid A of A",
-        "case_id": "1000002",
-        "hearing_date": "2026-04-27T10:00:00",
-        "county": "Tarrant",
-        "status": None,
-        "plaintiff": "JOHNSON MARY LLC",
-        "defendant": "C10002",
-    },
-    {
-        "IsUdiAccount": 0,
-        "Countyid": 3,
-        "Countyname": "Dallas",
-        "ClientStatus": "Active",
-        "accountnumber": "1000003",
-        "CADLegalName": "WILLIAMS PROPERTIES",
-        "Acc.property address": "789 Elm Blvd",
-        "cityid": "DALLAS",
-        "zipcode": "75201",
-        "StartDate": "2021-03-15T00:00:00",
-        "EndDate": None,
-        "clientnumber": "C10003",
-        "OCALUC": "C3",
-        "NeighbourhoodCode": "N003",
-        "completionDateAndTime": None,
-        "accountstatusid": 4,
-        "Accountstatus": "Inactive",
-        "NoticedDate": "2026-03-10T00:00:00",
-        "HearingType": "Formal",
-        "HearingResolutionId": 26,
-        "ProtestCodeValues": "Protested",
-        "ProtestReason": None,
-        "HearingFinalized": True,
-        "HearingStatus": "Scheduled",
-        "InformalHearingDate": None,
-        "FormalHearingDate": "2026-05-05T14:00:00",
-        "CADEvidenceLetterDate": "2026-02-15T00:00:00",
-        "CADEvidenceScanDate": "2026-02-20T00:00:00",
-        "CADUEValue": 750000,
-        "CADMarketMeanValue": 760000,
-        "CADMarketMedianValue": 755000,
-        "OfferDate": "2026-03-25T00:00:00",
-        "OfferValue": 740000,
-        "NoticeMarketValue": 780000,
-        "NoticeTotalValue": 780000,
-        "PostHearingMarketValue": None,
-        "PostHearingTotalValue": None,
-        "ReceivedDate": None,
-        "ExpiryDate": None,
-        "DateCoded": None,
-        "OriginalDateCoded": None,
-        "DateCodedEnd": None,
-        "CodedStatus": "Not Coded",
-        "AofAStatus": "No A of A",
-        "case_id": "1000003",
-        "hearing_date": "2026-05-05T14:00:00",
-        "county": "Dallas",
-        "status": "Scheduled",
-        "plaintiff": "WILLIAMS PROPERTIES",
-        "defendant": "C10003",
-    },
-    {
-        "IsUdiAccount": 1,
-        "Countyid": 1,
-        "Countyname": "Ellis",
-        "ClientStatus": "Active",
-        "accountnumber": "1000004",
-        "CADLegalName": "BROWN TRUST",
-        "Acc.property address": "321 Pine Rd",
-        "cityid": "ENNIS",
-        "zipcode": "75119",
-        "StartDate": "2018-07-01T00:00:00",
-        "EndDate": None,
-        "clientnumber": "C10004",
-        "OCALUC": "A2",
-        "NeighbourhoodCode": "N004",
-        "completionDateAndTime": None,
-        "accountstatusid": 1,
-        "Accountstatus": "Active",
-        "NoticedDate": "2026-03-12T00:00:00",
-        "HearingType": "Formal",
-        "HearingResolutionId": None,
-        "ProtestCodeValues": "Protested by client",
-        "ProtestReason": None,
-        "HearingFinalized": False,
-        "HearingStatus": None,
-        "InformalHearingDate": None,
-        "FormalHearingDate": "2026-04-24T08:00:00",
-        "CADEvidenceLetterDate": None,
-        "CADEvidenceScanDate": None,
-        "CADUEValue": 180000,
-        "CADMarketMeanValue": 185000,
-        "CADMarketMedianValue": 182000,
-        "OfferDate": None,
-        "OfferValue": None,
-        "NoticeMarketValue": 190000,
-        "NoticeTotalValue": 190000,
-        "PostHearingMarketValue": None,
-        "PostHearingTotalValue": None,
-        "ReceivedDate": "2025-09-01T00:00:00",
-        "ExpiryDate": "2024-09-01T00:00:00",
-        "DateCoded": "2026-01-20T00:00:00",
-        "OriginalDateCoded": "2026-01-20T00:00:00",
-        "DateCodedEnd": None,
-        "CodedStatus": "Coded",
-        "AofAStatus": "Expired",
-        "case_id": "1000004",
-        "hearing_date": "2026-04-24T08:00:00",
-        "county": "Ellis",
-        "status": None,
-        "plaintiff": "BROWN TRUST",
-        "defendant": "C10004",
-    },
-    {
-        "IsUdiAccount": 0,
-        "Countyid": 4,
-        "Countyname": "Collin",
-        "ClientStatus": "Active",
-        "accountnumber": "1000005",
-        "CADLegalName": "GARCIA INVESTMENTS",
-        "Acc.property address": "555 Maple Dr",
-        "cityid": "PLANO",
-        "zipcode": "75023",
-        "StartDate": "2022-01-01T00:00:00",
-        "EndDate": None,
-        "clientnumber": "C10005",
-        "OCALUC": "D4",
-        "NeighbourhoodCode": "N005",
-        "completionDateAndTime": None,
-        "accountstatusid": 1,
-        "Accountstatus": "Active",
-        "NoticedDate": "2026-03-15T00:00:00",
-        "HearingType": "Formal",
-        "HearingResolutionId": 8,
-        "ProtestCodeValues": "Protested",
-        "ProtestReason": None,
-        "HearingFinalized": False,
-        "HearingStatus": None,
-        "InformalHearingDate": None,
-        "FormalHearingDate": "2026-05-10T11:00:00",
-        "CADEvidenceLetterDate": None,
-        "CADEvidenceScanDate": None,
-        "CADUEValue": 420000,
-        "CADMarketMeanValue": 430000,
-        "CADMarketMedianValue": 425000,
-        "OfferDate": None,
-        "OfferValue": None,
-        "NoticeMarketValue": 440000,
-        "NoticeTotalValue": 440000,
-        "PostHearingMarketValue": None,
-        "PostHearingTotalValue": None,
-        "ReceivedDate": "2025-10-01T00:00:00",
-        "ExpiryDate": "2027-10-01T00:00:00",
-        "DateCoded": "2026-03-01T00:00:00",
-        "OriginalDateCoded": "2026-03-01T00:00:00",
-        "DateCodedEnd": None,
-        "CodedStatus": "Coded",
-        "AofAStatus": "Valid A of A",
-        "case_id": "1000005",
-        "hearing_date": "2026-05-10T11:00:00",
-        "county": "Collin",
-        "status": None,
-        "plaintiff": "GARCIA INVESTMENTS",
-        "defendant": "C10005",
-    },
-]
-
-MOCK_COUNTIES = ["Collin", "Dallas", "Ellis", "Tarrant"]
-
-MOCK_FILTER_OPTIONS = {
-    "hearingResolutionIds": ["(blank)", "8", "26"],
-    "protestCodes":         ["(blank)", "Protested", "Protested by client"],
-    "protestReasons":       ["(blank)"],
-    "hearingStatuses":      ["(blank)", "Scheduled"],
-    "hearingFinalized":     ["true", "false"],
-    "codedStatus":          ["Coded", "Not Coded"],
-    "aofaStatus":           ["Valid A of A", "Expired", "No A of A"],
-}
-
-
-# ─── Mock filter helper ───────────────────────────────────────────
-def apply_mock_filters(data, county, start_date, end_date,
-                       hearing_resolution_id, protest_code, protest_reason,
-                       hearing_finalized, hearing_status, coded_status,
-                       aofa_status, account_number, owner_name):
-    result = data[:]
-    if county:
-        result = [r for r in result if r["Countyname"] == county]
-    if start_date:
-        result = [r for r in result if r["FormalHearingDate"] and r["FormalHearingDate"][:10] >= start_date]
-    if end_date:
-        result = [r for r in result if r["FormalHearingDate"] and r["FormalHearingDate"][:10] <= end_date]
-    if hearing_resolution_id:
-        ids = [i.strip() for i in hearing_resolution_id.split(",") if i.strip()]
-        has_blank = "(blank)" in ids
-        real_ids  = [i for i in ids if i != "(blank)"]
-        def match_res(r):
-            v = r["HearingResolutionId"]
-            if has_blank and v is None: return True
-            if real_ids and str(v) in real_ids: return True
-            return False
-        result = [r for r in result if match_res(r)]
-    if protest_code:
-        codes = [c.strip() for c in protest_code.split(",") if c.strip()]
-        has_blank  = "(blank)" in codes
-        real_codes = [c for c in codes if c != "(blank)"]
-        def match_pc(r):
-            v = r["ProtestCodeValues"]
-            if has_blank and v is None: return True
-            if real_codes and v in real_codes: return True
-            return False
-        result = [r for r in result if match_pc(r)]
-    if protest_reason == "(blank)":
-        result = [r for r in result if r["ProtestReason"] is None]
-    elif protest_reason:
-        result = [r for r in result if r["ProtestReason"] == protest_reason]
-    if hearing_finalized == "true":
-        result = [r for r in result if r["HearingFinalized"] is True]
-    elif hearing_finalized == "false":
-        result = [r for r in result if r["HearingFinalized"] is False]
-    if hearing_status == "(blank)":
-        result = [r for r in result if r["HearingStatus"] is None]
-    elif hearing_status:
-        result = [r for r in result if r["HearingStatus"] == hearing_status]
-    if coded_status:
-        cs_list = [v.strip() for v in coded_status.split(",") if v.strip()]
-        result = [r for r in result if r["CodedStatus"] in cs_list]
-    if aofa_status:
-        as_list = [v.strip() for v in aofa_status.split(",") if v.strip()]
-        result = [r for r in result if r["AofAStatus"] in as_list]
-    if account_number:
-        result = [r for r in result if account_number.lower() in str(r["accountnumber"]).lower()]
-    if owner_name:
-        result = [r for r in result if owner_name.lower() in str(r["CADLegalName"]).lower()]
-    return result
-
-
-# ─── Routes ──────────────────────────────────────────────────────
-
 @app.get("/")
 def root():
-    mode = "MOCK" if USE_MOCK else "LIVE DB"
-    return {"message": f"Hearing Accounts API is running [{mode}]"}
+    DIST_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+    index = os.path.join(DIST_DIR, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    return {"message": "Hearing Accounts API is running"}
 
 
 def build_extra_filters(
     county, start_date, end_date,
     hearing_resolution_id, protest_code, protest_reason,
     hearing_finalized, hearing_status, coded_status, aofa_status,
-    account_number=None, owner_name=None
+    account_number=None, owner_name=None, property_address=None
 ):
     extra_filters = ""
+
     if county:
         extra_filters += f" AND c.Countyname = '{county}'"
     if start_date:
@@ -390,7 +48,7 @@ def build_extra_filters(
     if hearing_resolution_id:
         ids = [i.strip() for i in hearing_resolution_id.split(",") if i.strip()]
         has_blank = "(blank)" in ids
-        real_ids  = [i for i in ids if i != "(blank)"]
+        real_ids = [i for i in ids if i != "(blank)"]
         if has_blank and real_ids:
             id_list = ",".join(f"'{i}'" for i in real_ids)
             extra_filters += f" AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ({id_list}))"
@@ -401,7 +59,7 @@ def build_extra_filters(
             extra_filters += f" AND CAST(hr.HearingResolutionId AS VARCHAR) IN ({id_list})"
     if protest_code:
         codes = [c.strip() for c in protest_code.split(",") if c.strip()]
-        has_blank  = "(blank)" in codes
+        has_blank = "(blank)" in codes
         real_codes = [c for c in codes if c != "(blank)"]
         if has_blank and real_codes:
             code_list = ",".join(f"'{c}'" for c in real_codes)
@@ -438,12 +96,17 @@ def build_extra_filters(
         if "No A of A"    in as_list: as_parts.append("aof.ReceivedDate IS NULL")
         if as_parts:
             extra_filters += f" AND ({' OR '.join(as_parts)})"
+
     if account_number:
         acc = account_number.strip().replace("'", "''")
         extra_filters += f" AND a.accountnumber LIKE '%{acc}%'"
     if owner_name:
         name = owner_name.strip().replace("'", "''")
         extra_filters += f" AND p.CADLegalName LIKE '%{name}%'"
+    if property_address:
+        addr = property_address.strip().replace("'", "''")
+        extra_filters += f" AND ad.addressline1 LIKE '%{addr}%'"
+
     return extra_filters
 
 
@@ -492,31 +155,60 @@ def build_shared_cte(extra_filters):
     ),
     FinalResult AS (
         SELECT
-            p.IsUdiAccount, c.Countyid, c.Countyname, cl.ClientStatus,
-            a.accountnumber, p.CADLegalName,
+            p.IsUdiAccount,
+            c.Countyid,
+            c.Countyname,
+            cl.ClientStatus,
+            a.accountnumber,
+            p.CADLegalName,
             ad.addressline1 AS [Acc.property address],
-            ad.cityid, ad.zipcode, a.StartDate, a.EndDate,
-            f.clientnumber, e.OCALUC, NeighbourhoodCode,
-            hr.completionDateAndTime, a.accountstatusid, s.Accountstatus,
-            vn.NoticedDate, ht.HearingType, hr.HearingResolutionId,
-            pc.ProtestCodeValues, pr.ProtestReason, hr.HearingFinalized,
-            hrs.HearingStatus, hd.InformalHearingDate, hd.FormalHearingDate,
-            CADEvidenceLetterDate, CADEvidenceScanDate,
-            CADUEValue, CADMarketMeanValue, CADMarketMedianValue,
-            OfferDate, OfferValue,
-            vn.NoticeMarketValue, vn.NoticeTotalValue,
-            hr.PostHearingMarketValue, hr.PostHearingTotalValue,
-            aof.ReceivedDate, aof.ExpiryDate, aof.DateCoded,
-            aof.OriginalDateCoded, aof.DateCodedEnd,
+            ad.cityid,
+            ad.zipcode,
+            a.StartDate,
+            a.EndDate,
+            f.clientnumber,
+            e.OCALUC,
+            NeighbourhoodCode,
+            hr.completionDateAndTime,
+            a.accountstatusid,
+            s.Accountstatus,
+            vn.NoticedDate,
+            ht.HearingType,
+            hr.HearingResolutionId,
+            pc.ProtestCodeValues,
+            pr.ProtestReason,
+            hr.HearingFinalized,
+            hrs.HearingStatus,
+            hd.InformalHearingDate,
+            hd.FormalHearingDate,
+            CADEvidenceLetterDate,
+            CADEvidenceScanDate,
+            CADUEValue,
+            CADMarketMeanValue,
+            CADMarketMedianValue,
+            OfferDate,
+            OfferValue,
+            vn.NoticeMarketValue,
+            vn.NoticeTotalValue,
+            hr.PostHearingMarketValue,
+            hr.PostHearingTotalValue,
+            aof.ReceivedDate,
+            aof.ExpiryDate,
+            aof.DateCoded,
+            aof.OriginalDateCoded,
+            aof.DateCodedEnd,
             CASE WHEN aof.DateCoded IS NOT NULL THEN 'Coded' ELSE 'Not Coded' END AS CodedStatus,
             CASE
                 WHEN aof.ReceivedDate IS NULL THEN 'No A of A'
                 WHEN aof.ExpiryDate >= GETDATE() THEN 'Valid A of A'
                 ELSE 'Expired'
             END AS AofAStatus,
-            a.accountnumber AS case_id, hd.FormalHearingDate AS hearing_date,
-            c.Countyname AS county, hrs.HearingStatus AS status,
-            p.CADLegalName AS plaintiff, f.clientnumber AS defendant
+            a.accountnumber      AS case_id,
+            hd.FormalHearingDate AS hearing_date,
+            c.Countyname         AS county,
+            hrs.HearingStatus    AS status,
+            p.CADLegalName       AS plaintiff,
+            f.clientnumber       AS defendant
         FROM DedupedAccount a
         LEFT JOIN ptax_client f WITH (NOLOCK) ON f.clientid = a.clientid
         LEFT JOIN ptax_clientstatus cl WITH (NOLOCK) ON cl.clientstatusid = f.ClientStatusId
@@ -559,58 +251,81 @@ def get_hearings(
     aofa_status: Optional[str]           = Query(None),
     account_number: Optional[str]        = Query(None),
     owner_name: Optional[str]            = Query(None),
+    property_address: Optional[str]      = Query(None),
     page: int                            = Query(1, ge=1),
     page_size: int                       = Query(100, ge=1, le=500),
 ):
-    if USE_MOCK:
-        filtered = apply_mock_filters(
-            MOCK_HEARINGS, county, start_date, end_date,
-            hearing_resolution_id, protest_code, protest_reason,
-            hearing_finalized, hearing_status, coded_status,
-            aofa_status, account_number, owner_name
-        )
-        total = len(filtered)
-        offset = (page - 1) * page_size
-        return {
-            "data": filtered[offset: offset + page_size],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": max(1, -(-total // page_size)),
-        }
-
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
+
     extra_filters = build_extra_filters(
-        county, start_date, end_date, hearing_resolution_id, protest_code,
-        protest_reason, hearing_finalized, hearing_status, coded_status,
-        aofa_status, account_number, owner_name
+        county, start_date, end_date,
+        hearing_resolution_id, protest_code, protest_reason,
+        hearing_finalized, hearing_status, coded_status, aofa_status,
+        account_number, owner_name, property_address
     )
+
     offset = (page - 1) * page_size
     shared_cte = build_shared_cte(extra_filters)
+
+    # Count query
     count_query = shared_cte + """
-    SELECT COUNT(*) AS total FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY accountnumber, CountyId
-            ORDER BY CASE WHEN IsUdiAccount=1 THEN 0 WHEN IsUdiAccount IS NULL THEN 2 ELSE 1 END) AS rn
+    SELECT COUNT(*) AS total
+    FROM (
+        SELECT *,
+            ROW_NUMBER() OVER (
+                PARTITION BY accountnumber, CountyId
+                ORDER BY
+                    CASE
+                        WHEN IsUdiAccount = 1 THEN 0
+                        WHEN IsUdiAccount IS NULL THEN 2
+                        ELSE 1
+                    END
+            ) AS rn
         FROM FinalResult
-    ) deduped WHERE rn = 1"""
+    ) deduped
+    WHERE rn = 1
+    """
+
     cursor.execute(count_query)
     total_count = cursor.fetchone()["total"]
+
+    # Data query with pagination
     data_query = shared_cte + f"""
-    SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY accountnumber, CountyId
-            ORDER BY CASE WHEN IsUdiAccount=1 THEN 0 WHEN IsUdiAccount IS NULL THEN 2 ELSE 1 END) AS rn
+    SELECT *
+    FROM (
+        SELECT *,
+            ROW_NUMBER() OVER (
+                PARTITION BY accountnumber, CountyId
+                ORDER BY
+                    CASE
+                        WHEN IsUdiAccount = 1 THEN 0
+                        WHEN IsUdiAccount IS NULL THEN 2
+                        ELSE 1
+                    END
+            ) AS rn
         FROM FinalResult
-    ) deduped WHERE rn = 1
+    ) deduped
+    WHERE rn = 1
     ORDER BY FormalHearingDate DESC
-    OFFSET {offset} ROWS FETCH NEXT {page_size} ROWS ONLY"""
+    OFFSET {offset} ROWS
+    FETCH NEXT {page_size} ROWS ONLY
+    """
+
     cursor.execute(data_query)
     rows = cursor.fetchall()
     conn.close()
-    return {"data": rows, "total": total_count, "page": page,
-            "page_size": page_size, "total_pages": -(-total_count // page_size)}
+
+    return {
+        "data": rows,
+        "total": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": -(-total_count // page_size),
+    }
 
 
+# ── NEW: Export ALL records (no pagination) ──────────────────────────────────
 @app.get("/export-all")
 def export_all(
     county: Optional[str]                = Query(None),
@@ -625,45 +340,56 @@ def export_all(
     aofa_status: Optional[str]           = Query(None),
     account_number: Optional[str]        = Query(None),
     owner_name: Optional[str]            = Query(None),
+    property_address: Optional[str]      = Query(None),
 ):
-    if USE_MOCK:
-        filtered = apply_mock_filters(
-            MOCK_HEARINGS, county, start_date, end_date,
-            hearing_resolution_id, protest_code, protest_reason,
-            hearing_finalized, hearing_status, coded_status,
-            aofa_status, account_number, owner_name
-        )
-        return {"data": filtered, "total": len(filtered)}
-
+    """Returns ALL matching records without pagination — used for full Excel export."""
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
+
     extra_filters = build_extra_filters(
-        county, start_date, end_date, hearing_resolution_id, protest_code,
-        protest_reason, hearing_finalized, hearing_status, coded_status,
-        aofa_status, account_number, owner_name
+        county, start_date, end_date,
+        hearing_resolution_id, protest_code, protest_reason,
+        hearing_finalized, hearing_status, coded_status, aofa_status,
+        account_number, owner_name, property_address
     )
+
     shared_cte = build_shared_cte(extra_filters)
+
     data_query = shared_cte + """
-    SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY accountnumber, CountyId
-            ORDER BY CASE WHEN IsUdiAccount=1 THEN 0 WHEN IsUdiAccount IS NULL THEN 2 ELSE 1 END) AS rn
+    SELECT *
+    FROM (
+        SELECT *,
+            ROW_NUMBER() OVER (
+                PARTITION BY accountnumber, CountyId
+                ORDER BY
+                    CASE
+                        WHEN IsUdiAccount = 1 THEN 0
+                        WHEN IsUdiAccount IS NULL THEN 2
+                        ELSE 1
+                    END
+            ) AS rn
         FROM FinalResult
-    ) deduped WHERE rn = 1 ORDER BY FormalHearingDate DESC"""
+    ) deduped
+    WHERE rn = 1
+    ORDER BY FormalHearingDate DESC
+    """
+
     cursor.execute(data_query)
     rows = cursor.fetchall()
     conn.close()
+
     return {"data": rows, "total": len(rows)}
 
 
 @app.get("/counties")
 def get_counties():
-    if USE_MOCK:
-        return MOCK_COUNTIES
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
     cursor.execute("""
-        SELECT DISTINCT c.Countyname FROM ptax_county c WITH (NOLOCK)
-        WHERE c.StateId = '44' AND c.Countyname IS NOT NULL ORDER BY c.Countyname
+        SELECT DISTINCT c.Countyname
+        FROM ptax_county c WITH (NOLOCK)
+        WHERE c.StateId = '44' AND c.Countyname IS NOT NULL
+        ORDER BY c.Countyname
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -672,23 +398,40 @@ def get_counties():
 
 @app.get("/filter-options")
 def get_filter_options():
-    if USE_MOCK:
-        return MOCK_FILTER_OPTIONS
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
+
     def fetch(sql):
         cursor.execute(sql)
         return cursor.fetchall()
-    hr = fetch("SELECT DISTINCT CAST(HearingResolutionId AS VARCHAR) AS val FROM ptax_hearingresult WITH (NOLOCK) WHERE HearingResolutionId IS NOT NULL ORDER BY val")
-    pc = fetch("SELECT DISTINCT ProtestCodeValues AS val FROM PTAX_ProtestCodeValues WITH (NOLOCK) WHERE ProtestCodeValues IS NOT NULL ORDER BY val")
-    pr = fetch("SELECT DISTINCT ProtestReason AS val FROM PTAX_Protestreason WITH (NOLOCK) WHERE ProtestReason IS NOT NULL ORDER BY val")
-    hs = fetch("SELECT DISTINCT HearingStatus AS val FROM ptax_hearingstatus WITH (NOLOCK) WHERE HearingStatus IS NOT NULL ORDER BY val")
+
+    hearing_resolution = fetch("""
+        SELECT DISTINCT CAST(HearingResolutionId AS VARCHAR) AS val
+        FROM ptax_hearingresult WITH (NOLOCK)
+        WHERE HearingResolutionId IS NOT NULL ORDER BY val
+    """)
+    protest_codes = fetch("""
+        SELECT DISTINCT ProtestCodeValues AS val
+        FROM PTAX_ProtestCodeValues WITH (NOLOCK)
+        WHERE ProtestCodeValues IS NOT NULL ORDER BY val
+    """)
+    protest_reasons = fetch("""
+        SELECT DISTINCT ProtestReason AS val
+        FROM PTAX_Protestreason WITH (NOLOCK)
+        WHERE ProtestReason IS NOT NULL ORDER BY val
+    """)
+    hearing_statuses = fetch("""
+        SELECT DISTINCT HearingStatus AS val
+        FROM ptax_hearingstatus WITH (NOLOCK)
+        WHERE HearingStatus IS NOT NULL ORDER BY val
+    """)
+
     conn.close()
     return {
-        "hearingResolutionIds": ["(blank)"] + [r["val"] for r in hr],
-        "protestCodes":         ["(blank)"] + [r["val"] for r in pc],
-        "protestReasons":       ["(blank)"] + [r["val"] for r in pr],
-        "hearingStatuses":      ["(blank)"] + [r["val"] for r in hs],
+        "hearingResolutionIds": ["(blank)"] + [r["val"] for r in hearing_resolution],
+        "protestCodes":         ["(blank)"] + [r["val"] for r in protest_codes],
+        "protestReasons":       ["(blank)"] + [r["val"] for r in protest_reasons],
+        "hearingStatuses":      ["(blank)"] + [r["val"] for r in hearing_statuses],
         "hearingFinalized":     ["true", "false"],
         "codedStatus":          ["Coded", "Not Coded"],
         "aofaStatus":           ["Valid A of A", "Expired", "No A of A"],
@@ -697,23 +440,25 @@ def get_filter_options():
 
 @app.get("/debug-protestcode")
 def debug_protestcode():
-    if USE_MOCK:
-        return [{"ProtestCodeValues": "Protested", "cnt": 2}]
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
     cursor.execute("""
-        SELECT pc.ProtestCodeValues, pc.ProtestCodeValueId, pd.ProtestCodeId, COUNT(*) AS cnt
+        SELECT 
+            pc.ProtestCodeValues,
+            pc.ProtestCodeValueId,
+            pd.ProtestCodeId,
+            COUNT(*) AS cnt
         FROM ptax_account a WITH (NOLOCK)
-        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid=a.accountid AND b.TaxYear=2026
-        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId=b.YearlyHearingDetailsId
-        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid=a.countyid
-        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId=pd.ProtestDetailsId
-        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId=ISNULL(pd.ProtestCodeId,12)
-        WHERE hd.HearingTypeId=1 AND a.accountstatusid IN (1,4,5) AND c.StateId='44'
-        AND c.Countyname='Ellis'
-        AND CAST(hd.FormalHearingDate AS DATE)>='2026-04-16'
-        AND CAST(hd.FormalHearingDate AS DATE)<='2026-05-11'
-        GROUP BY pc.ProtestCodeValues,pc.ProtestCodeValueId,pd.ProtestCodeId
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId = pd.ProtestDetailsId
+        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId = ISNULL(pd.ProtestCodeId, 12)
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        GROUP BY pc.ProtestCodeValues, pc.ProtestCodeValueId, pd.ProtestCodeId
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -722,99 +467,223 @@ def debug_protestcode():
 
 @app.get("/debug-mls")
 def debug_mls():
-    if USE_MOCK:
-        return {"mock_mode": True, "message": "Debug not available in mock mode"}
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
     results = {}
-    cursor.execute("""SELECT COUNT(*) AS cnt FROM ptax_account a WITH (NOLOCK)
-        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid=a.accountid AND b.TaxYear=2026
-        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId=b.YearlyHearingDetailsId
-        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid=a.countyid
-        WHERE hd.HearingTypeId=1 AND a.accountstatusid IN (1,4,5) AND c.StateId='44'
-        AND c.Countyname='Ellis'
-        AND CAST(hd.FormalHearingDate AS DATE)>='2026-04-16'
-        AND CAST(hd.FormalHearingDate AS DATE)<='2026-05-11'""")
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+    """)
     results["1_base_county_date"] = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN ptax_hearingresult hr WITH (NOLOCK) ON hr.HearingDetailsId = hd.HearingDetailsId
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ('8','26'))
+    """)
+    results["2_plus_resolution"] = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN ptax_hearingresult hr WITH (NOLOCK) ON hr.HearingDetailsId = hd.HearingDetailsId
+        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId = pd.ProtestDetailsId
+        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId = ISNULL(pd.ProtestCodeId, 12)
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ('8','26'))
+        AND pc.ProtestCodeValues IN ('Protested','Protested by client')
+    """)
+    results["3_plus_protestcode"] = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN ptax_hearingresult hr WITH (NOLOCK) ON hr.HearingDetailsId = hd.HearingDetailsId
+        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId = pd.ProtestDetailsId
+        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId = ISNULL(pd.ProtestCodeId, 12)
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ('8','26'))
+        AND pc.ProtestCodeValues IN ('Protested','Protested by client')
+        AND (hr.HearingFinalized = 0 OR hr.HearingFinalized IS NULL)
+    """)
+    results["4_plus_finalized_false"] = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN ptax_hearingresult hr WITH (NOLOCK) ON hr.HearingDetailsId = hd.HearingDetailsId
+        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId = pd.ProtestDetailsId
+        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId = ISNULL(pd.ProtestCodeId, 12)
+        LEFT JOIN PTAX_AofA aof WITH (NOLOCK) ON aof.ClientId = a.clientid AND aof.AccountId = a.AccountId
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ('8','26'))
+        AND pc.ProtestCodeValues IN ('Protested','Protested by client')
+        AND (hr.HearingFinalized = 0 OR hr.HearingFinalized IS NULL)
+        AND aof.DateCoded IS NOT NULL
+    """)
+    results["5_plus_coded"] = cursor.fetchone()["cnt"]
+
+    cursor.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM ptax_account a WITH (NOLOCK)
+        INNER JOIN ptax_yearlyhearingdetails b WITH (NOLOCK) ON b.accountid = a.accountid AND b.TaxYear = 2026
+        LEFT JOIN ptax_hearingdetails hd WITH (NOLOCK) ON hd.YearlyHearingDetailsId = b.YearlyHearingDetailsId
+        LEFT JOIN ptax_county c WITH (NOLOCK) ON c.countyid = a.countyid
+        LEFT JOIN ptax_hearingresult hr WITH (NOLOCK) ON hr.HearingDetailsId = hd.HearingDetailsId
+        LEFT JOIN PTAX_ProtestDetails pd WITH (NOLOCK) ON b.ProtestingDetailsId = pd.ProtestDetailsId
+        LEFT JOIN PTAX_ProtestCodeValues pc WITH (NOLOCK) ON pc.ProtestCodeValueId = ISNULL(pd.ProtestCodeId, 12)
+        LEFT JOIN PTAX_AofA aof WITH (NOLOCK) ON aof.ClientId = a.clientid AND aof.AccountId = a.AccountId
+        WHERE hd.HearingTypeId = 1 AND a.accountstatusid IN (1,4,5) AND c.StateId = '44'
+        AND c.Countyname = 'Ellis'
+        AND CAST(hd.FormalHearingDate AS DATE) >= '2026-04-16'
+        AND CAST(hd.FormalHearingDate AS DATE) <= '2026-05-11'
+        AND (hr.HearingResolutionId IS NULL OR CAST(hr.HearingResolutionId AS VARCHAR) IN ('8','26'))
+        AND pc.ProtestCodeValues IN ('Protested','Protested by client')
+        AND (hr.HearingFinalized = 0 OR hr.HearingFinalized IS NULL)
+        AND aof.DateCoded IS NOT NULL
+        AND aof.ExpiryDate >= GETDATE()
+    """)
+    results["6_plus_valid_aofa"] = cursor.fetchone()["cnt"]
+
     conn.close()
     return results
 
 
 @app.get("/test")
 def test_data():
-    if USE_MOCK:
-        return [{"TaxYear": 2026}, {"TaxYear": 2025}]
     conn = get_conn()
     cursor = conn.cursor(as_dict=True)
-    cursor.execute("SELECT DISTINCT b.TaxYear FROM ptax_yearlyhearingdetails b WITH (NOLOCK) ORDER BY b.TaxYear DESC")
+    cursor.execute("""
+        SELECT DISTINCT b.TaxYear
+        FROM ptax_yearlyhearingdetails b WITH (NOLOCK)
+        ORDER BY b.TaxYear DESC
+    """)
     rows = cursor.fetchall()
     conn.close()
     return rows
 
 
-# ── Outlook Draft ─────────────────────────────────────────────────
+# ── Outlook Draft with XLSX Attachment ───────────────────────────────────────
+from fastapi import Body
+from pydantic import BaseModel
+from typing import List
+import tempfile, os, base64
 
 class OutlookRequest(BaseModel):
     to: str
     cc: List[str]
     subject: str
     body: str
-    file_name: str
-    file_b64: str
+    file_name: str        # e.g. Missing_HB201_Evidence_Apr22_Ellis.xlsx
+    file_b64: str         # base64-encoded xlsx bytes
 
 @app.post("/send-outlook")
 def send_outlook(req: OutlookRequest):
-    if USE_MOCK:
-        return {"ok": True, "message": "Mock mode — Outlook not triggered"}
+    """
+    Receives XLSX (base64) + mail metadata.
+    Writes XLSX to temp file, opens Outlook draft with attachment.
+    User reviews and clicks Send manually.
+    """
     try:
         import win32com.client as win32
         import pythoncom
     except ImportError:
         return {"ok": False, "error": "pywin32 not installed. Run: pip install pywin32"}
+
     try:
+        # Must initialize COM on this thread (FastAPI runs on worker threads)
         pythoncom.CoInitialize()
+
+        # Decode and write xlsx to temp folder
         xlsx_bytes = base64.b64decode(req.file_b64)
         tmp_path   = os.path.join(tempfile.gettempdir(), req.file_name)
         with open(tmp_path, "wb") as f:
             f.write(xlsx_bytes)
+
+        # Open Outlook draft
         outlook = win32.Dispatch("Outlook.Application")
-        mail    = outlook.CreateItem(0)
+        mail    = outlook.CreateItem(0)   # olMailItem
         mail.To      = req.to
         mail.CC      = ";".join(req.cc)
         mail.Subject = req.subject
         mail.Body    = req.body
         mail.Attachments.Add(tmp_path)
-        mail.Display()
+        mail.Display()   # opens draft — user clicks Send
+
         return {"ok": True}
+
     except Exception as e:
         err = str(e)
         if "dialog box is open" in err or "-2147467259" in err:
-            return {"ok": False, "error": "Outlook-ல் dialog box திறந்திருக்கு. Close பண்ணிட்டு try பண்ணுங்கள்."}
+            return {"ok": False, "error": "Outlook-ல் ஒரு dialog box திறந்திருக்கு. Outlook-ஐ திறந்து அந்த popup-ஐ close பண்ணிட்டு மீண்டும் try பண்ணுங்கள்."}
         return {"ok": False, "error": err}
+
     finally:
-        try: pythoncom.CoUninitialize()
-        except: pass
+        try:
+            pythoncom.CoUninitialize()
+        except:
+            pass
 
 
-# ── Tuan Sent Tracking ────────────────────────────────────────────
+# ── Tuan Sent Tracking (JSON file on server) ─────────────────────────────────
+import json
+from datetime import datetime
+from pathlib import Path
 
 SENT_FILE = Path(__file__).parent / "tuan_sent.json"
 
 def load_sent() -> dict:
     if SENT_FILE.exists():
-        try: return json.loads(SENT_FILE.read_text(encoding="utf-8"))
-        except: return {}
+        try:
+            return json.loads(SENT_FILE.read_text(encoding="utf-8"))
+        except:
+            return {}
     return {}
 
 def save_sent(data: dict):
     SENT_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 class MarkSentRequest(BaseModel):
-    records: List[dict]
+    records: List[dict]   # [{ "accountnumber": "...", "county": "..." }, ...]
     sent_by: str
 
 @app.post("/tuan-sent/mark")
 def mark_sent(req: MarkSentRequest):
+    """Mark records as sent to Tuan."""
     data = load_sent()
     now  = datetime.now().strftime("%Y-%m-%d %H:%M")
     for r in req.records:
@@ -825,9 +694,22 @@ def mark_sent(req: MarkSentRequest):
 
 @app.get("/tuan-sent/list")
 def list_sent():
+    """Return all sent records as { 'accountnumber|county': { sent_date, sent_by } }"""
     return load_sent()
 
 @app.delete("/tuan-sent/clear")
 def clear_sent():
+    """Admin: clear all sent records."""
     save_sent({})
     return {"ok": True}
+
+# ── Serve React frontend ──────────────────────────────────────────────────────
+DIST_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.exists(DIST_DIR):
+    app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        index = os.path.join(DIST_DIR, "index.html")
+        return FileResponse(index)
+
