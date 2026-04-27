@@ -612,6 +612,10 @@ from pydantic import BaseModel
 from typing import List
 import tempfile, os, base64
 
+# Exchange server URL — set via env var or hardcode your EWS endpoint
+# Example: https://mail.poconnor.com/EWS/Exchange.asmx
+EXCHANGE_EWS_URL = os.environ.get("EXCHANGE_EWS_URL", "https://mail.poconnor.com/EWS/Exchange.asmx")
+
 class OutlookRequest(BaseModel):
     to: str
     cc: List[str]
@@ -619,7 +623,7 @@ class OutlookRequest(BaseModel):
     body: str
     file_name: str        # e.g. Missing_HB201_Evidence_Apr22_Ellis.xlsx
     file_b64: str         # base64-encoded xlsx bytes
-    exchange_email: str   # user's Exchange email (e.g. john@company.com)
+    exchange_email: str   # user's Exchange email (e.g. john@poconnor.com)
     exchange_password: str  # user's Exchange / AD password
 
 @app.post("/send-outlook")
@@ -633,15 +637,23 @@ def send_outlook(req: OutlookRequest):
         return {"ok": False, "error": "exchangelib not installed. Run: pip install exchangelib"}
 
     try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         # Decode xlsx bytes
         xlsx_bytes = base64.b64decode(req.file_b64)
 
-        # Connect to Exchange using autodiscover
-        creds   = Credentials(req.exchange_email, req.exchange_password)
+        # Manual Exchange config — autodiscover=False (works on internal networks)
+        creds  = Credentials(req.exchange_email, req.exchange_password)
+        config = Configuration(
+            service_endpoint=EXCHANGE_EWS_URL,
+            credentials=creds,
+        )
         account = Account(
             primary_smtp_address=req.exchange_email,
             credentials=creds,
-            autodiscover=True,
+            config=config,
+            autodiscover=False,
             access_type=DELEGATE,
         )
 
