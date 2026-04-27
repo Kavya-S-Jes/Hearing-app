@@ -24,6 +24,8 @@ try:
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
+
+def get_conn():
     return pymssql.connect(server=DB_SERVER, database=DB_DATABASE)
 
 
