@@ -9,7 +9,11 @@ if (!window._xlsxStyleLoaded) {
   document.head.appendChild(s);
 }
 
-const API_BASE  = "http://127.0.0.1:8000";
+// Auto-detect backend host: same machine = 127.0.0.1, vera machine = same IP
+const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://127.0.0.1:8000"
+  : "";  // ngrok-la same origin — no port needed
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
 const PAGE_SIZE = 100;
 
 // ─── Email Configuration (add/remove here freely) ────────────────────────────
@@ -426,7 +430,7 @@ async function downloadAllExcel(filters, county, hb201Mode = false) {
   if (filters.hearingStatus)                     p.set("hearing_status", filters.hearingStatus);
   if (filters.codedStatus?.length > 0)           p.set("coded_status", filters.codedStatus.join(","));
   if (filters.aofaStatus?.length > 0)            p.set("aofa_status", filters.aofaStatus.join(","));
-  const res  = await fetch(`${API_BASE}/export-all?${p}`);
+  const res  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
   const json = await res.json();
   const all  = json.data;
   const csv  = buildCSV(all, hb201Mode);
@@ -499,7 +503,7 @@ const iStyle = {
   background: "#fff", outline: "none", boxSizing: "border-box"
 };
 
-function FilterSelect({ label, value, onChange, options, placeholder = "All" }) {
+function FilterSelect({ label, value, onChange, options, placeholder = "All", disabled = false }) {
   // options can be plain strings OR objects { value, label }
   const normalised = options.map(o =>
     typeof o === "object" ? o : { value: o, label: o }
@@ -509,7 +513,8 @@ function FilterSelect({ label, value, onChange, options, placeholder = "All" }) 
       <label style={{ fontSize:10, color:"#94a3b8", display:"block", marginBottom:3, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>
         {label}
       </label>
-      <select value={value} onChange={e => onChange(e.target.value)} style={iStyle}>
+      <select value={value} onChange={e => onChange(e.target.value)} disabled={disabled}
+        style={{ ...iStyle, ...(disabled ? { background:"#f1f5f9", color:"#94a3b8", cursor:"not-allowed", opacity:0.7 } : {}) }}>
         <option value="">{placeholder}</option>
         {normalised.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -517,7 +522,7 @@ function FilterSelect({ label, value, onChange, options, placeholder = "All" }) 
   );
 }
 
-function MultiSelectDropdown({ label, values, onChange, options }) {
+function MultiSelectDropdown({ label, values, onChange, options, disabled = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -526,8 +531,9 @@ function MultiSelectDropdown({ label, values, onChange, options }) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
   const allSelected = values.length === options.length && options.length > 0 && values.length > 0;
-  const toggleAll   = () => onChange(allSelected ? [] : [...options]);
+  const toggleAll   = () => { if (!disabled) onChange(allSelected ? [] : [...options]); };
   const toggleOne   = (opt) => {
+    if (disabled) return;
     if (values.includes(opt)) onChange(values.filter(v => v !== opt));
     else onChange([...values, opt]);
   };
@@ -538,11 +544,13 @@ function MultiSelectDropdown({ label, values, onChange, options }) {
   return (
     <div ref={ref} style={{ position:"relative" }}>
       <label style={{ fontSize:10, color:"#94a3b8", display:"block", marginBottom:3, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>{label}</label>
-      <button onClick={() => setOpen(o => !o)} style={{ ...iStyle, display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", textAlign:"left" }}>
+      <button onClick={() => { if (!disabled) setOpen(o => !o); }}
+        style={{ ...iStyle, display:"flex", justifyContent:"space-between", alignItems:"center", textAlign:"left",
+          ...(disabled ? { background:"#f1f5f9", color:"#94a3b8", cursor:"not-allowed", opacity:0.7 } : { cursor:"pointer" }) }}>
         <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{displayText}</span>
-        <span style={{ fontSize:9, marginLeft:6, flexShrink:0 }}>{open ? "▲" : "▼"}</span>
+        <span style={{ fontSize:9, marginLeft:6, flexShrink:0 }}>{open && !disabled ? "▲" : "▼"}</span>
       </button>
-      {open && (
+      {open && !disabled && (
         <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, zIndex:999, background:"#fff", border:"1.5px solid #e2e8f0", borderRadius:8, minWidth:"100%", maxHeight:220, overflowY:"auto", boxShadow:"0 8px 24px rgba(0,0,0,0.12)" }}>
           <label style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 12px", cursor:"pointer", fontWeight:600, fontSize:12, color:"#1e293b", borderBottom:"1px solid #f1f5f9" }}
             onMouseEnter={e => e.currentTarget.style.background="#f8fafc"}
@@ -564,7 +572,7 @@ function MultiSelectDropdown({ label, values, onChange, options }) {
         <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:5 }}>
           {values.map(v => (
             <span key={v} style={{ display:"inline-flex", alignItems:"center", gap:3, background:"#eef2ff", color:"#4338ca", fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:999 }}>
-              {v}<span onClick={() => toggleOne(v)} style={{ cursor:"pointer", opacity:0.7, fontSize:11 }}>✕</span>
+              {v}{!disabled && <span onClick={() => toggleOne(v)} style={{ cursor:"pointer", opacity:0.7, fontSize:11 }}>✕</span>}
             </span>
           ))}
         </div>
@@ -706,12 +714,11 @@ function AdminPanel({ currentUser, users, setUsers, onClose, onSentCleared }) {
   const [msg, setMsg]                 = useState("");
   const [clearMsg, setClearMsg]       = useState("");
   const [clearing, setClearing]       = useState(false);
-
-  const handleClearSent = async () => {
+const handleClearSent = async () => {
     if (!window.confirm("⚠️ Sent to Tuan records எல்லாம் clear ஆகும். Sure-ஆ?")) return;
     setClearing(true); setClearMsg("");
     try {
-      const res = await fetch(`${API_BASE}/tuan-sent/clear`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/tuan-sent/clear`, { method: "DELETE", headers: NGROK_HEADERS });
       const data = await res.json();
       if (data.ok) {
         setClearMsg("✅ All Tuan sent records cleared!");
@@ -798,8 +805,7 @@ function AdminPanel({ currentUser, users, setUsers, onClose, onSentCleared }) {
         <div style={{ marginTop:"1.25rem", background:"#fff7ed", borderRadius:10, padding:"1rem", border:"1px solid #fed7aa" }}>
           <p style={{ margin:"0 0 6px", fontSize:12, fontWeight:700, color:"#92400e" }}>🗑️ Reset Tuan Sent Records</p>
           <p style={{ margin:"0 0 10px", fontSize:11, color:"#b45309" }}>
-            Test / dummy data-ஆல் mark ஆன "Sent to Tuan" records-ஐ clear பண்ண இதை use பண்ணுங்க. 
-            Clear பண்ணா எல்லா records-உம் மீண்டும் "Not Sent" status-ல் காட்டும்.
+            Sent to Tuan records were cleared — all items will now appear as “Not Sent” again.
           </p>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <button
@@ -849,10 +855,10 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       if (filters.hearingStatus)                   p.set("hearing_status", filters.hearingStatus);
       if (filters.codedStatus?.length > 0)         p.set("coded_status", filters.codedStatus.join(","));
       if (filters.aofaStatus?.length > 0)          p.set("aofa_status", filters.aofaStatus.join(","));
-      const res  = await fetch(`${API_BASE}/export-all?${p}`);
+      const res  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
       const json = await res.json();
       // Fetch current sent records from server
-      const sentRes  = await fetch(`${API_BASE}/tuan-sent/list`);
+      const sentRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const sentData = await sentRes.json();
       const isSentRecord = (r) => !!sentData[`${r.accountnumber}|${r.Countyname || ""}`];
       // Only export NOT YET SENT records
@@ -928,7 +934,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       setStatus("Opening Outlook draft...");
       const apiRes  = await fetch(`${API_BASE}/send-outlook`, {
         method: "POST",
-        headers: { "Content-Type":"application/json" },
+        headers: { "Content-Type":"application/json", ...NGROK_HEADERS },
         body: JSON.stringify({
           to:        toEmail,
           cc:        KAVYA_CC,
@@ -949,11 +955,11 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       };
       await fetch(`${API_BASE}/tuan-sent/mark`, {
         method: "POST",
-        headers: { "Content-Type":"application/json" },
+        headers: { "Content-Type":"application/json", ...NGROK_HEADERS },
         body: JSON.stringify(markPayload),
       });
       // ✅ Fresh sent records fetch pannitu parent-ku pass panu — table udan update aagum
-      const freshRes  = await fetch(`${API_BASE}/tuan-sent/list`);
+      const freshRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const freshData = await freshRes.json();
       if (typeof onSentUpdate === "function") onSentUpdate(freshData);
       setSent(true);
@@ -1099,7 +1105,7 @@ export default function HearingApp() {
   const [sendingKavya, setSendingKavya] = useState(false);
   const [sortCol, setSortCol]           = useState(null);
   const [sortDir, setSortDir]           = useState("asc");
-  const [showReminder, setShowReminder] = useState(true);
+  const [showReminder, setShowReminder] = useState(false);
   const [reminderDays, setReminderDays]   = useState(5);
   const [showReminderSetting, setShowReminderSetting] = useState(false);
 
@@ -1125,27 +1131,27 @@ export default function HearingApp() {
   const [codedStatus, setCodedStatus]                 = useState([]);
   const [aofaStatus, setAofaStatus]                   = useState([]);
   const [accountNumberFilter, setAccountNumberFilter] = useState("");
-  const [ownerNameFilter, setOwnerNameFilter]         = useState("");
+  const [propertyAddressFilter, setPropertyAddressFilter] = useState("");
 
   const filterRef = useRef({});
   filterRef.current = {
     county, startDate, endDate, hearingResolutionId,
     protestCode, protestReason, hearingFinalized,
     hearingStatus, codedStatus, aofaStatus,
-    accountNumber: accountNumberFilter, ownerName: ownerNameFilter,
+    accountNumber: accountNumberFilter, propertyAddress: propertyAddressFilter,
   };
 
   // Load sent records from server on mount + helper to refresh
   const loadSentRecords = () => {
-    fetch(`${API_BASE}/tuan-sent/list`)
+    fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS })
       .then(r => r.json())
       .then(setSentRecords)
       .catch(() => {});
   };
 
   useEffect(() => {
-    fetch(`${API_BASE}/counties`).then(r => r.json()).then(setCounties).catch(() => {});
-    fetch(`${API_BASE}/filter-options`).then(r => r.json()).then(data => {
+    fetch(`${API_BASE}/counties`, { headers: NGROK_HEADERS }).then(r => r.json()).then(setCounties).catch(() => {});
+    fetch(`${API_BASE}/filter-options`, { headers: NGROK_HEADERS }).then(r => r.json()).then(data => {
       setFilterOpts(prev => ({
         ...prev,
         ...data,
@@ -1181,15 +1187,15 @@ export default function HearingApp() {
     if (f.codedStatus?.length > 0)         p.set("coded_status", f.codedStatus.join(","));
     if (f.aofaStatus?.length > 0)          p.set("aofa_status", f.aofaStatus.join(","));
     if (f.accountNumber)                   p.set("account_number", f.accountNumber.trim());
-    if (f.ownerName)                       p.set("owner_name", f.ownerName.trim());
+    if (f.propertyAddress)                 p.set("property_address", f.propertyAddress.trim());
     p.set("page", pageNum); p.set("page_size", PAGE_SIZE);
     try {
-      const res = await fetch(`${API_BASE}/hearings?${p}`);
+      const res = await fetch(`${API_BASE}/hearings?${p}`, { headers: NGROK_HEADERS });
       if (!res.ok) throw new Error();
       const json = await res.json();
       setHearings(json.data); setTotalRecords(json.total);
       setTotalPages(json.total_pages); setPage(pageNum);
-      setHasFetched(true); setShowReminder(true);
+      setHasFetched(true);
       setSelectedRows(new Set());
     } catch {
       setError("Backend connect ஆகலை. FastAPI server running-ஆ இருக்கா check பண்ணுங்க.");
@@ -1210,15 +1216,15 @@ export default function HearingApp() {
     if (overrides.codedStatus?.length > 0)         p.set("coded_status", overrides.codedStatus.join(","));
     if (overrides.aofaStatus?.length > 0)          p.set("aofa_status", overrides.aofaStatus.join(","));
     if (overrides.accountNumber)                   p.set("account_number", overrides.accountNumber.trim());
-    if (overrides.ownerName)                       p.set("owner_name", overrides.ownerName.trim());
+    if (overrides.propertyAddress)                 p.set("property_address", overrides.propertyAddress.trim());
     p.set("page", pageNum); p.set("page_size", PAGE_SIZE);
     try {
-      const res = await fetch(`${API_BASE}/hearings?${p}`);
+      const res = await fetch(`${API_BASE}/hearings?${p}`, { headers: NGROK_HEADERS });
       if (!res.ok) throw new Error();
       const json = await res.json();
       setHearings(json.data); setTotalRecords(json.total);
       setTotalPages(json.total_pages); setPage(pageNum);
-      setHasFetched(true); setShowReminder(true);
+      setHasFetched(true);
     } catch {
       setError("Backend connect ஆகலை. FastAPI server running-ஆ இருக்கா check பண்ணுங்க.");
     } finally { setLoading(false); }
@@ -1232,6 +1238,7 @@ export default function HearingApp() {
       setCodedStatus([]); setAofaStatus([]);
       setStartDate(""); setEndDate("");
       setMlsActive(false);
+      setHearings([]); setHasFetched(false); setTotalRecords(0); setTotalPages(0);
       return;
     }
     setShowLogin(true);
@@ -1248,7 +1255,7 @@ export default function HearingApp() {
     setCodedStatus(MLS_DEFAULTS.codedStatus);
     setAofaStatus(MLS_DEFAULTS.aofaStatus);
     setStartDate(today); setEndDate(plus25);
-    setShowFilters(true); setMlsActive(true);
+    setShowFilters(false); setMlsActive(true);
     setTimeout(() => fetchWithOverride({
       hearingResolutionId: MLS_DEFAULTS.hearingResolutionIds,
       protestCode:         MLS_DEFAULTS.protestCodes,
@@ -1273,8 +1280,7 @@ export default function HearingApp() {
     setCounty(""); setStartDate(""); setEndDate("");
     setHearingResolutionId([]); setProtestCode([]); setProtestReason("");
     setHearingFinalized(""); setHearingStatus(""); setCodedStatus([]); setAofaStatus([]);
-    setAccountNumberFilter(""); setOwnerNameFilter("");
-    setMlsActive(false); setCurrentUser(null);
+    setAccountNumberFilter(""); setPropertyAddressFilter("");
     setHearings([]); setTotalRecords(0); setTotalPages(0);
     setHasFetched(false); setPage(1);
   };
@@ -1310,7 +1316,7 @@ export default function HearingApp() {
         if (f.hearingStatus)                   p.set("hearing_status", f.hearingStatus);
         if (f.codedStatus?.length > 0)         p.set("coded_status", f.codedStatus.join(","));
         if (f.aofaStatus?.length > 0)          p.set("aofa_status", f.aofaStatus.join(","));
-        const res  = await fetch(`${API_BASE}/export-all?${p}`);
+        const res  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
         const json = await res.json();
         let allData = json.data;
         // Apply same frontend HearingFinalized filter
@@ -1478,6 +1484,27 @@ export default function HearingApp() {
               {mlsActive ? "✓ HB201 Active" : "⚡ HB201 Evidence"}
             </button>
 
+            {/* Reminder Bell — always visible, click to toggle */}
+            {hasFetched && (
+              <button onClick={() => setShowReminder(s => !s)} style={{
+                position:"relative", background: reminderRows.length > 0 ? "rgba(251,146,60,0.25)" : "rgba(255,255,255,0.1)",
+                border: reminderRows.length > 0 ? "1.5px solid #fb923c" : "1.5px solid rgba(255,255,255,0.3)",
+                color:"#fff", borderRadius:10, padding:"8px 12px",
+                cursor:"pointer", fontSize:16, lineHeight:1
+              }}>
+                🔔
+                {reminderRows.length > 0 && (
+                  <span style={{
+                    position:"absolute", top:-5, right:-5,
+                    background:"#ef4444", color:"#fff",
+                    borderRadius:"50%", width:16, height:16,
+                    fontSize:9, fontWeight:800,
+                    display:"flex", alignItems:"center", justifyContent:"center"
+                  }}>{reminderRows.length}</span>
+                )}
+              </button>
+            )}
+
             {/* Logged in user + Send buttons + Admin panel */}
             {currentUser && (
               <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
@@ -1495,15 +1522,6 @@ export default function HearingApp() {
                   }}>📧 Send to Tuan</button>
                 )}
 
-                {/* Send to Kavya — only when HB201 active */}
-                {mlsActive && (
-                  <button onClick={handleSendKavya} disabled={hearings.length === 0} style={{
-                    background: hearings.length === 0 ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.85)",
-                    border:"1.5px solid rgba(255,255,255,0.4)", color:"#fff", borderRadius:10,
-                    padding:"8px 14px", cursor: hearings.length === 0 ? "not-allowed":"pointer",
-                    fontSize:12, fontWeight:700, opacity: hearings.length === 0 ? 0.5 : 1
-                  }}>📧 Send to Kavya</button>
-                )}
 
                 {currentUser.isAdmin && (
                   <button onClick={() => setShowAdminPanel(true)} style={{ background:"rgba(255,255,255,0.1)", border:"1.5px solid rgba(255,255,255,0.3)", color:"#e0e7ff", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:11, fontWeight:600 }}>
@@ -1514,16 +1532,6 @@ export default function HearingApp() {
                   Logout
                 </button>
               </div>
-            )}
-
-            {/* Download current page — only when HB201 active */}
-            {mlsActive && (
-              <button onClick={() => downloadExcel(displayHearings, county, mlsActive)} disabled={displayHearings.length === 0} style={{
-                background:"rgba(255,255,255,0.15)", border:"1.5px solid rgba(255,255,255,0.4)",
-                color:"#fff", borderRadius:10, padding:"8px 14px",
-                cursor: hearings.length === 0 ? "not-allowed":"pointer",
-                fontSize:12, fontWeight:600, opacity: hearings.length === 0 ? 0.5 : 1
-              }}>⬇️ Page ({displayHearings.length})</button>
             )}
 
             {/* Download ALL — only when HB201 active */}
@@ -1544,13 +1552,9 @@ export default function HearingApp() {
 
       <div style={{ maxWidth:1600, margin:"0 auto", padding:"1rem" }}>
 
-        {/* MLS Banner */}
+        {/* MLS Banner — filter info removed, only Tuan Sent filter + user */}
         {mlsActive && (
-          <div style={{ background:"#fffbeb", border:"1.5px solid #f59e0b", borderRadius:10, padding:"0.6rem 1rem", marginBottom:"0.75rem", fontSize:12, color:"#92400e", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
-            <span>
-              ⚡ <strong>HB201 Evidence active</strong> — HearingResolutionId: 8, 26, blanks · ProtestCode: Protested, Protested by client · ProtestReason: blank · HearingFinalized: No · HearingStatus: blank · CodedStatus: Coded · AofAStatus: Valid A of A ·{" "}
-              <strong>Formal Hearing Date: {getToday()} → {getDatePlusDays(25)}</strong>
-            </span>
+          <div style={{ background:"#fffbeb", border:"1.5px solid #f59e0b", borderRadius:10, padding:"0.6rem 1rem", marginBottom:"0.75rem", fontSize:12, color:"#92400e", display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8, flexWrap:"wrap" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
               {/* Tuan Sent Filter */}
               <div style={{ display:"flex", alignItems:"center", gap:4, background:"rgba(255,255,255,0.6)", borderRadius:8, padding:"3px 6px", border:"1px solid #fde68a" }}>
@@ -1564,11 +1568,11 @@ export default function HearingApp() {
                   }}>{label}</button>
                 ))}
               </div>
-            {currentUser && (
-              <span style={{ fontSize:11, color:"#b45309", fontWeight:600, whiteSpace:"nowrap" }}>
-                Logged as: {currentUser.username}
-              </span>
-            )}
+              {currentUser && (
+                <span style={{ fontSize:11, color:"#b45309", fontWeight:600, whiteSpace:"nowrap" }}>
+                  Logged as: {currentUser.username}
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -1599,23 +1603,23 @@ export default function HearingApp() {
         )}
 
         {/* Reminder Banner */}
-        {showReminder && reminderRows.length > 0 && (
-          <div style={{ background:"#fff7ed", border:"1.5px solid #fb923c", borderRadius:10, padding:"0.7rem 1rem", marginBottom:"0.75rem", fontSize:12, color:"#9a3412", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
-            <span>
-              🔔 <strong>Reminder:</strong> {reminderRows.length} record{reminderRows.length > 1 ? "s" : ""} have a Formal Hearing Date within the next <strong>{reminderDays} days</strong>!
-              {" "}Accounts: {reminderRows.slice(0, 5).map(r => r.accountnumber).join(", ")}{reminderRows.length > 5 ? ` +${reminderRows.length - 5} more` : ""}
-            </span>
+        {showReminder && (
+          <div style={{ background: reminderRows.length > 0 ? "#fff7ed" : "#f0fdf4", border: reminderRows.length > 0 ? "1.5px solid #fb923c" : "1.5px solid #86efac", borderRadius:10, padding:"0.7rem 1rem", marginBottom:"0.75rem", fontSize:12, color: reminderRows.length > 0 ? "#9a3412" : "#15803d", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
+            {reminderRows.length > 0 ? (
+              <span>
+                🔔 <strong>Reminder:</strong> {reminderRows.length} record{reminderRows.length > 1 ? "s" : ""} have a Formal Hearing Date within the next <strong>{reminderDays} days</strong>!
+                {" "}Accounts: {reminderRows.slice(0, 5).map(r => r.accountnumber).join(", ")}{reminderRows.length > 5 ? ` +${reminderRows.length - 5} more` : ""}
+              </span>
+            ) : (
+              <span>✅ <strong>No upcoming reminders</strong> within the next <strong>{reminderDays} days</strong>.</span>
+            )}
             <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-              <button onClick={() => setShowReminderSetting(s => !s)} style={{ background:"#fb923c", border:"none", borderRadius:7, padding:"3px 10px", cursor:"pointer", fontSize:11, color:"#fff", fontWeight:700 }}>⚙️ Set Days</button>
-              <button onClick={() => setShowReminder(false)} style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:16, color:"#9a3412" }}>✕</button>
+              <button onClick={() => setShowReminderSetting(s => !s)} style={{ background: reminderRows.length > 0 ? "#fb923c" : "#16a34a", border:"none", borderRadius:7, padding:"3px 10px", cursor:"pointer", fontSize:11, color:"#fff", fontWeight:700 }}>⚙️ {reminderDays}d</button>
+              <button onClick={() => setShowReminder(false)} style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:16, color: reminderRows.length > 0 ? "#9a3412" : "#15803d" }}>✕</button>
             </div>
           </div>
         )}
-        {hasFetched && !loading && reminderRows.length === 0 && (
-          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:"0.25rem" }}>
-            <button onClick={() => setShowReminderSetting(s => !s)} style={{ background:"transparent", border:"1px solid #cbd5e1", borderRadius:7, padding:"3px 10px", cursor:"pointer", fontSize:11, color:"#94a3b8", fontWeight:600 }}>🔔 Reminder ({reminderDays}d)</button>
-          </div>
-        )}
+
 
         {/* Filter Panel */}
         <div style={{ background:"#fff", borderRadius:14, padding:"1rem 1.25rem", marginBottom:"1rem", boxShadow:"0 4px 20px rgba(0,0,0,0.06)", border:"1px solid #f1f5f9" }}>
@@ -1636,10 +1640,10 @@ export default function HearingApp() {
                 placeholder="e.g. 00000765508" style={iStyle} />
             </div>
             <div>
-              <label style={{ fontSize:10, color:"#94a3b8", display:"block", marginBottom:3, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Owner Name</label>
-              <input value={ownerNameFilter} onChange={e => setOwnerNameFilter(e.target.value)}
+              <label style={{ fontSize:10, color:"#94a3b8", display:"block", marginBottom:3, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Property Address</label>
+              <input value={propertyAddressFilter} onChange={e => setPropertyAddressFilter(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
-                placeholder="e.g. John Smith" style={iStyle} />
+                placeholder="e.g. 123 Main St" style={iStyle} />
             </div>
             <div style={{ display:"flex", alignItems:"flex-end", gap:6 }}>
               <button onClick={handleSearch} disabled={loading} style={{
@@ -1669,26 +1673,41 @@ export default function HearingApp() {
 
           {showFilters && (
             <div style={{ borderTop:"1px solid #f1f5f9", paddingTop:"1rem", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-              <MultiSelectDropdown label="Hearing Resolution ID" values={hearingResolutionId} onChange={setHearingResolutionId} options={filterOpts.hearingResolutionIds} />
-              <MultiSelectDropdown label="Protest Code"          values={protestCode}         onChange={setProtestCode}         options={filterOpts.protestCodes} />
-              <FilterSelect label="Protest Reason"    value={protestReason}    onChange={setProtestReason}   options={filterOpts.protestReasons} />
-              <FilterSelect label="Hearing Finalized" value={hearingFinalized} onChange={setHearingFinalized} options={filterOpts.hearingFinalized} />
-              <FilterSelect label="Hearing Status"    value={hearingStatus}    onChange={setHearingStatus}   options={filterOpts.hearingStatuses} />
-              <MultiSelectDropdown label="Coded Status"  values={codedStatus}  onChange={setCodedStatus}  options={filterOpts.codedStatus} />
-              <MultiSelectDropdown label="A of A Status" values={aofaStatus}   onChange={setAofaStatus}   options={filterOpts.aofaStatus} />
+              <MultiSelectDropdown label="Hearing Resolution ID" values={hearingResolutionId} onChange={setHearingResolutionId} options={filterOpts.hearingResolutionIds} disabled={mlsActive} />
+              <MultiSelectDropdown label="Protest Code"          values={protestCode}         onChange={setProtestCode}         options={filterOpts.protestCodes} disabled={mlsActive} />
+              <FilterSelect label="Protest Reason"    value={protestReason}    onChange={setProtestReason}   options={filterOpts.protestReasons} disabled={mlsActive} />
+              <FilterSelect label="Hearing Finalized" value={hearingFinalized} onChange={setHearingFinalized} options={filterOpts.hearingFinalized} disabled={mlsActive} />
+              <FilterSelect label="Hearing Status"    value={hearingStatus}    onChange={setHearingStatus}   options={filterOpts.hearingStatuses} disabled={mlsActive} />
+              <MultiSelectDropdown label="Coded Status"  values={codedStatus}  onChange={setCodedStatus}  options={filterOpts.codedStatus} disabled={mlsActive} />
+              <MultiSelectDropdown label="A of A Status" values={aofaStatus}   onChange={setAofaStatus}   options={filterOpts.aofaStatus} disabled={mlsActive} />
             </div>
           )}
         </div>
 
         {/* Count Bar */}
         {hasFetched && (
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.75rem" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.75rem", gap:8, flexWrap:"wrap" }}>
             <span style={{ fontSize:13, color:"#64748b" }}>
               {loading ? "Loading..." : hearingFinalized === "(blank)" ? `Showing ${displayHearings.length} of ${displayHearings.length} filtered records (Blanks only)` : (hearingFinalized === "false" || hearingFinalized === "true") ? `Showing ${displayHearings.length} of ${displayHearings.length} filtered records` : `Showing ${hearings.length} of ${totalRecords.toLocaleString()} total records · Page ${page} of ${totalPages}`}
             </span>
-            {!loading && hearings.length > 0 && (
-              <span style={{ fontSize:11, color:"#94a3b8" }}>Click column header to sort · Scroll right for all columns</span>
-            )}
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {!loading && hearings.length > 0 && (
+                <span style={{ fontSize:11, color:"#94a3b8" }}>Click column header to sort · Scroll right for all columns</span>
+              )}
+              {/* Download Excel — both normal & HB201 mode */}
+              {!loading && hearings.length > 0 && (
+                <button onClick={handleDownloadAll} disabled={exporting} style={{
+                  padding:"6px 14px", borderRadius:8, border:"none",
+                  background: exporting ? "#a5b4fc" : "#16a34a",
+                  color:"#fff", fontWeight:700, fontSize:12,
+                  cursor: exporting ? "not-allowed" : "pointer"
+                }}>
+                  {exporting
+                    ? "⏳ Exporting..."
+                    : `⬇️ Download Excel (${(hearingFinalized === "(blank)" || hearingFinalized === "false" || hearingFinalized === "true") ? displayHearings.length.toLocaleString() : totalRecords.toLocaleString()})`}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1735,8 +1754,8 @@ export default function HearingApp() {
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead>
                   <tr style={{ background:"linear-gradient(135deg,#1e1b4b,#312e81)" }}>
-                    <th style={{ padding:"10px 12px", color:"#a5b4fc", fontWeight:600, textAlign:"left", whiteSpace:"nowrap", position:"sticky", left:0, background:"#1e1b4b", zIndex:2, fontSize:11 }}>#</th>
-                    <th style={{ padding:"10px 12px", textAlign:"center", whiteSpace:"nowrap", position:"sticky", left:40, background:"#1e1b4b", zIndex:2 }}>
+                    <th style={{ padding:"10px 12px", color:"#a5b4fc", fontWeight:600, textAlign:"left", whiteSpace:"nowrap", position:"sticky", left:0, background:"#1e1b4b", zIndex:2, fontSize:11, width:36, minWidth:36, boxSizing:"border-box" }}>#</th>
+                    <th style={{ padding:"10px 12px", textAlign:"center", whiteSpace:"nowrap", position:"sticky", left:36, background:"#1e1b4b", zIndex:2, width:36, minWidth:36, boxSizing:"border-box" }}>
                       <input type="checkbox"
                         checked={sorted.length > 0 && selectedRows.size === sorted.length}
                         onChange={toggleAll}
@@ -1761,13 +1780,21 @@ export default function HearingApp() {
                     const hoverBg = getRowHoverColor(row);
                     return (
                       <tr key={i}
-                        style={{ borderBottom:"1px solid #f1f5f9", background:bg }}
-                        onMouseEnter={e => e.currentTarget.style.background = hoverBg}
-                        onMouseLeave={e => e.currentTarget.style.background = bg}>
-                        <td style={{ padding:"7px 12px", color:"#94a3b8", fontWeight:500, whiteSpace:"nowrap", position:"sticky", left:0, background:"inherit", zIndex:1, fontSize:11 }}>
+                        style={{ borderBottom:"1px solid #f1f5f9" }}
+                        onMouseEnter={e => {
+                          Array.from(e.currentTarget.cells).forEach(td => {
+                            td.style.background = hoverBg;
+                          });
+                        }}
+                        onMouseLeave={e => {
+                          Array.from(e.currentTarget.cells).forEach(td => {
+                            td.style.background = bg;
+                          });
+                        }}>
+                        <td style={{ padding:"7px 12px", color:"#94a3b8", fontWeight:500, whiteSpace:"nowrap", position:"sticky", left:0, background:bg, zIndex:1, fontSize:11, width:36, minWidth:36, boxSizing:"border-box" }}>
                           {(page-1) * PAGE_SIZE + i + 1}
                         </td>
-                        <td style={{ padding:"7px 12px", textAlign:"center", position:"sticky", left:40, background:"inherit", zIndex:1 }}>
+                        <td style={{ padding:"7px 12px", textAlign:"center", position:"sticky", left:36, background:bg, zIndex:1, width:36, minWidth:36, boxSizing:"border-box" }}>
                           <input type="checkbox"
                             checked={selectedRows.has(`${row.accountnumber}|${i}`)}
                             onChange={() => toggleRow(`${row.accountnumber}|${i}`)}
@@ -1776,7 +1803,7 @@ export default function HearingApp() {
                         {mlsActive && (() => {
                           const info = getSentInfo(row);
                           return (
-                            <td style={{ padding:"7px 12px", whiteSpace:"nowrap", fontSize:11, textAlign:"center" }}>
+                            <td style={{ padding:"7px 12px", whiteSpace:"nowrap", fontSize:11, textAlign:"center", background:bg }}>
                               {info ? (
                                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
                                   <span style={{ display:"inline-flex", alignItems:"center", gap:3, background:"#dcfce7", color:"#166534", borderRadius:6, padding:"2px 8px", fontWeight:700, fontSize:10 }}>
@@ -1791,7 +1818,7 @@ export default function HearingApp() {
                           );
                         })()}
                         {COLUMNS.map(col => (
-                          <td key={col.key} style={{ padding:"7px 12px", color:"#334155", whiteSpace:"nowrap", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis" }}>
+                          <td key={col.key} style={{ padding:"7px 12px", color:"#334155", whiteSpace:"nowrap", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", background:bg }}>
                             {formatDisplay(row[col.key])}
                           </td>
                         ))}
