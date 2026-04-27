@@ -847,105 +847,64 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
   const handleSend = async () => {
     setSending(true); setErrMsg(""); setStatus("Fetching all records...");
     try {
-      // Step 1: Fetch ALL records (not just current page)
+      // Step 1: Build filter params (same filters used for search)
       const p = new URLSearchParams();
-      if (filters.county)                          p.set("county", filters.county);
-      if (filters.startDate)                       p.set("start_date", filters.startDate);
-      if (filters.endDate)                         p.set("end_date", filters.endDate);
-      if (filters.hearingResolutionId?.length > 0) p.set("hearing_resolution_id", filters.hearingResolutionId.join(","));
-      if (filters.protestCode?.length > 0)         p.set("protest_code", filters.protestCode.join(","));
-      if (filters.protestReason)                   p.set("protest_reason", filters.protestReason);
-      if (filters.hearingFinalized)                p.set("hearing_finalized", filters.hearingFinalized);
-      if (filters.hearingStatus)                   p.set("hearing_status", filters.hearingStatus);
-      if (filters.codedStatus?.length > 0)         p.set("coded_status", filters.codedStatus.join(","));
-      if (filters.aofaStatus?.length > 0)          p.set("aofa_status", filters.aofaStatus.join(","));
-      const res  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
-      const json = await res.json();
-      // Fetch current sent records from server
+      const f = filters;
+      if (f.county)                          p.set("county", f.county);
+      if (f.startDate)                       p.set("start_date", f.startDate);
+      if (f.endDate)                         p.set("end_date", f.endDate);
+      if (f.hearingResolutionId?.length > 0) p.set("hearing_resolution_id", f.hearingResolutionId.join(","));
+      if (f.protestCode?.length > 0)         p.set("protest_code", f.protestCode.join(","));
+      if (f.protestReason)                   p.set("protest_reason", f.protestReason);
+      if (f.hearingFinalized)                p.set("hearing_finalized", f.hearingFinalized);
+      if (f.hearingStatus)                   p.set("hearing_status", f.hearingStatus);
+      if (f.codedStatus?.length > 0)         p.set("coded_status", f.codedStatus.join(","));
+      if (f.aofaStatus?.length > 0)          p.set("aofa_status", f.aofaStatus.join(","));
+
+      // Step 2: Check sent records — filter out already-sent rows
       const sentRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const sentData = await sentRes.json();
-      const isSentRecord = (r) => !!sentData[`${r.accountnumber}|${r.Countyname || ""}`];
-      // Only export NOT YET SENT records
-      const allData = json.data.filter(r => !isSentRecord(r));
-      if (allData.length === 0) throw new Error("All records have already been sent to Tuan! No pending records found.");
 
-      // Step 2: Build XLSX (colored) and convert to base64
-      setStatus(`Building Excel (${allData.length} records)...`);
-      const XLSXs = window.XLSX;
-      if (!XLSXs || !window._xlsxStyleReady) throw new Error("Excel library not ready. Wait 3s and retry.");
+      // Fetch JSON data to know which records are not-yet-sent (for mark step)
+      const jsonRes  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
+      const jsonData = await jsonRes.json();
+      const pendingData = jsonData.data.filter(r => !sentData[`${r.accountnumber}|${r.Countyname || ""}`]);
+      if (pendingData.length === 0) throw new Error("All records have already been sent to Tuan! No pending records found.");
 
-      const TEXT_COLS_XL = new Set(["accountnumber","clientnumber","zipcode","cityid"]);
-      const hb201Cols = [];
-      for (const col of COLUMNS) {
-        hb201Cols.push(col);
-        if (col.key === "CADEvidenceScanDate") hb201Cols.push({ key:"__hbStatus", label:"HB Status" });
-        if (col.key === "ExpiryDate")          hb201Cols.push({ key:"__aofaStatus", label:"A of A Status" });
-        if (col.key === "DateCoded")           hb201Cols.push({ key:"__codedStatus", label:"Coded Status" });
-      }
+      // Step 3: Download Excel blob from server (server builds the styled xlsx)
+      setStatus("Downloading Excel...");
+      const excelRes = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
+      if (!excelRes.ok) throw new Error("Excel download failed");
+      const blob = await excelRes.blob();
 
-      const CAT_STYLE = {
-        0: { bg:"FFFFFFFF", fc:"FF333333" },
-        1: { bg:"FFFFF1F2", fc:"FF991B1B" },
-        2: { bg:"FFFFF7ED", fc:"FF9A3412" },
-        3: { bg:"FFF0FDF4", fc:"FF166534" },
-      };
-      const HDR_STYLE = {
-        font:      { bold:true, color:{ rgb:"FFFFFF" }, sz:11, name:"Arial" },
-        fill:      { fgColor:{ rgb:"1E1B4B" }, patternType:"solid" },
-        alignment: { horizontal:"center", vertical:"center", wrapText:false },
-        border:    { bottom:{ style:"thin", color:{ rgb:"6366F1" } } },
-      };
+      // 👉 Trigger file download
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      a.click();
+      window.URL.revokeObjectURL(blobUrl);
 
-      const ws = {};
-      const range = { s:{ r:0, c:0 }, e:{ r:allData.length, c:hb201Cols.length-1 } };
-      hb201Cols.forEach((col, ci) => {
-        const ref = XLSXs.utils.encode_cell({ r:0, c:ci });
-        ws[ref] = { v:col.label, t:"s", s:HDR_STYLE };
+      // 👉 Convert blob to base64 for email attachment
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onload  = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
       });
-      allData.forEach((row, ri) => {
-        const cat = getRowCategory(row);
-        const { bg, fc } = CAT_STYLE[cat];
-        const rowFill   = { fgColor:{ rgb:bg.slice(2) }, patternType:"solid" };
-        const rowFont   = { color:{ rgb:fc.slice(2) }, sz:10, name:"Arial" };
-        const rowBorder = { bottom:{ style:"hair", color:{ rgb:"E2E8F0" } } };
-        const { codedStatus, aofaStatus, hbStatus } = computeHB201Columns(row);
-        hb201Cols.forEach((col, ci) => {
-          let rawVal;
-          if      (col.key === "__hbStatus")    rawVal = hbStatus;
-          else if (col.key === "__aofaStatus")  rawVal = aofaStatus;
-          else if (col.key === "__codedStatus") rawVal = codedStatus;
-          else rawVal = row[col.key];
-          const isText    = TEXT_COLS_XL.has(col.key);
-          const displayVal = isText
-            ? (rawVal === null || rawVal === undefined ? "" : String(rawVal))
-            : (formatVal(rawVal) || "");
-          const ref = XLSXs.utils.encode_cell({ r:ri+1, c:ci });
-          ws[ref] = { v:displayVal, t:"s", s:{ fill:rowFill, font:rowFont, border:rowBorder, alignment:{ vertical:"center" } } };
-        });
-      });
-      ws["!ref"]  = XLSXs.utils.encode_range(range);
-      ws["!cols"] = hb201Cols.map(c => ({ wch: Math.max((c.label||"").length+4, 16) }));
-      const wb = XLSXs.utils.book_new();
-      XLSXs.utils.book_append_sheet(wb, ws, "HB201");
 
-      // Write to base64
-      const xlsxBin = XLSXs.write(wb, { bookType:"xlsx", type:"binary", cellStyles:true });
-      const xlsxB64 = btoa(
-        Array.from(xlsxBin).map(c => String.fromCharCode(c.charCodeAt(0) & 0xff)).join("")
-      );
-
-      // Step 3: POST to FastAPI → Outlook draft opens with xlsx attached
-      setStatus("Opening Outlook draft...");
+      // Step 4: POST to FastAPI → open Outlook draft with xlsx attached
+      setStatus("Opening Outlook...");
       const apiRes  = await fetch(`${API_BASE}/send-outlook`, {
         method: "POST",
-        headers: { "Content-Type":"application/json", ...NGROK_HEADERS },
+        headers: { "Content-Type": "application/json", ...NGROK_HEADERS },
         body: JSON.stringify({
-          to:        toEmail,
-          cc:        KAVYA_CC,
-          subject:   subject,
-          body:      bodyText,
+          to:                toEmail,
+          cc:                KAVYA_CC,
+          subject:           subject,
+          body:              bodyText,
           file_name:         fileName,
-          file_b64:          xlsxB64,
+          file_b64:          base64,
           exchange_email:    exchangeEmail,
           exchange_password: exchangePassword,
         }),
@@ -953,18 +912,19 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       const apiData = await apiRes.json();
       if (!apiData.ok) throw new Error(apiData.error || "Outlook failed to open");
 
-      // Step 4: Mark records as sent
+      // Step 5: Mark records as sent
       setStatus("Saving sent records...");
       const markPayload = {
-        records: allData.map(r => ({ accountnumber: String(r.accountnumber), county: r.Countyname || "" })),
+        records: pendingData.map(r => ({ accountnumber: String(r.accountnumber), county: r.Countyname || "" })),
         sent_by: currentUser?.username || "unknown",
       };
       await fetch(`${API_BASE}/tuan-sent/mark`, {
         method: "POST",
-        headers: { "Content-Type":"application/json", ...NGROK_HEADERS },
+        headers: { "Content-Type": "application/json", ...NGROK_HEADERS },
         body: JSON.stringify(markPayload),
       });
-      // ✅ Fresh sent records fetch pannitu parent-ku pass panu — table udan update aagum
+
+      // ✅ Refresh sent records in parent — table updates immediately
       const freshRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const freshData = await freshRes.json();
       if (typeof onSentUpdate === "function") onSentUpdate(freshData);
