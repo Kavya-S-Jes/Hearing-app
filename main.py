@@ -19,11 +19,13 @@ app.add_middleware(
 )
 
 try:
-    import win32com.client as win32
-    import pythoncom
-    WIN32_AVAILABLE = True
+    from exchangelib import (
+        Credentials, Account, Message, Mailbox,
+        FileAttachment, DELEGATE, Configuration
+    )
+    EXCHANGELIB_AVAILABLE = True
 except ImportError:
-    WIN32_AVAILABLE = False
+    EXCHANGELIB_AVAILABLE = False
 
 def get_conn():
     return pymssql.connect(server=DB_SERVER, database=DB_DATABASE)
@@ -617,50 +619,63 @@ class OutlookRequest(BaseModel):
     body: str
     file_name: str        # e.g. Missing_HB201_Evidence_Apr22_Ellis.xlsx
     file_b64: str         # base64-encoded xlsx bytes
+    exchange_email: str   # user's Exchange email (e.g. john@company.com)
+    exchange_password: str  # user's Exchange / AD password
 
 @app.post("/send-outlook")
 def send_outlook(req: OutlookRequest):
     """
-    Receives XLSX (base64) + mail metadata.
-    Writes XLSX to temp file, opens Outlook draft with attachment.
-    User reviews and clicks Send manually.
+    Receives XLSX (base64) + mail metadata + Exchange credentials.
+    Saves as Draft in Exchange Drafts folder with XLSX attached.
+    User opens Outlook, finds the draft, reviews, and clicks Send manually.
     """
-    if not WIN32_AVAILABLE:
-        return {"ok": False, "error": "pywin32 not installed. Run: pip install pywin32"}
+    if not EXCHANGELIB_AVAILABLE:
+        return {"ok": False, "error": "exchangelib not installed. Run: pip install exchangelib"}
 
     try:
-        # Must initialize COM on this thread (FastAPI runs on worker threads)
-        pythoncom.CoInitialize()
-
-        # Decode and write xlsx to temp folder
+        # Decode xlsx bytes
         xlsx_bytes = base64.b64decode(req.file_b64)
-        tmp_path   = os.path.join(tempfile.gettempdir(), req.file_name)
-        with open(tmp_path, "wb") as f:
-            f.write(xlsx_bytes)
 
-        # Open Outlook draft
-        outlook = win32.Dispatch("Outlook.Application")
-        mail    = outlook.CreateItem(0)   # olMailItem
-        mail.To      = req.to
-        mail.CC      = ";".join(req.cc)
-        mail.Subject = req.subject
-        mail.Body    = req.body
-        mail.Attachments.Add(tmp_path)
-        mail.Display()   # opens draft — user clicks Send
+        # Connect to Exchange using autodiscover
+        creds   = Credentials(req.exchange_email, req.exchange_password)
+        account = Account(
+            primary_smtp_address=req.exchange_email,
+            credentials=creds,
+            autodiscover=True,
+            access_type=DELEGATE,
+        )
 
-        return {"ok": True}
+        # Build recipient lists
+        to_recipients = [Mailbox(email_address=addr.strip())
+                         for addr in req.to.split(";") if addr.strip()]
+        cc_recipients = [Mailbox(email_address=addr.strip())
+                         for addr in req.cc if addr.strip()]
+
+        # Build draft message
+        draft = Message(
+            account=account,
+            folder=account.drafts,
+            subject=req.subject,
+            body=req.body,
+            to_recipients=to_recipients,
+            cc_recipients=cc_recipients,
+        )
+
+        # Attach the xlsx
+        draft.attach(FileAttachment(name=req.file_name, content=xlsx_bytes))
+
+        # Save to Drafts folder (does NOT send)
+        draft.save()
+
+        return {"ok": True, "message": "Draft saved to Outlook Drafts folder. Open Outlook and click Send."}
 
     except Exception as e:
         err = str(e)
-        if "dialog box is open" in err or "-2147467259" in err:
-            return {"ok": False, "error": "Outlook-ல் ஒரு dialog box திறந்திருக்கு. Outlook-ஐ திறந்து அந்த popup-ஐ close பண்ணிட்டு மீண்டும் try பண்ணுங்கள்."}
+        if "401" in err or "Unauthorized" in err or "authentication" in err.lower():
+            return {"ok": False, "error": "Wrong email/password. Please check your Exchange credentials."}
+        if "autodiscover" in err.lower() or "503" in err or "dns" in err.lower():
+            return {"ok": False, "error": f"Exchange server connection failed: {err}"}
         return {"ok": False, "error": err}
-
-    finally:
-        try:
-            pythoncom.CoUninitialize()
-        except:
-            pass
 
 
 # ── Tuan Sent Tracking (JSON file on server) ─────────────────────────────────
