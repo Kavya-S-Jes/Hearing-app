@@ -829,25 +829,21 @@ const handleClearSent = async () => {
 
 // ─── Tuan Mail Modal ──────────────────────────────────────────────────────────
 function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSentUpdate }) {
-  const [sending, setSending]             = useState(false);
-  const [sent, setSent]                   = useState(false);
-  const [errMsg, setErrMsg]               = useState("");
-  const [status, setStatus]               = useState("");
-  const [exchangeEmail, setExchangeEmail] = useState(
-    currentUser?.username ? `${currentUser.username}@poconnor.com` : ""
-  );
-  const [exchangePassword, setExchangePassword] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent]       = useState(false);
+  const [errMsg, setErrMsg]   = useState("");
+  const [status, setStatus]   = useState("");
 
   const todayFormatted = getTodayFormatted();
   const fileName       = `Missing_HB201_Evidence_${todayFormatted.replace(" ","")}_${county || "All"}.xlsx`;
   const toEmail        = TUAN_EMAIL;
   const subject        = `Missing HB 201 Evidence - upcoming 25 days Hearing - ORR-${todayFormatted}` + (county ? ` (${county})` : "");
-  const bodyText       = `Hello Tuan,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.`;
+  const bodyText       = `Hello Tuan,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n⚠️ Please attach the downloaded file "${fileName}" before sending.\n\nTotal Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}`;
 
   const handleSend = async () => {
-    setSending(true); setErrMsg(""); setStatus("Fetching all records...");
+    setSending(true); setErrMsg(""); setStatus("Fetching records...");
     try {
-      // Step 1: Build filter params (same filters used for search)
+      // Step 1: Build filter params
       const p = new URLSearchParams();
       const f = filters;
       if (f.county)                          p.set("county", f.county);
@@ -865,52 +861,23 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       const sentRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const sentData = await sentRes.json();
 
-      // Fetch JSON data to know which records are not-yet-sent (for mark step)
       const jsonRes  = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
       const jsonData = await jsonRes.json();
       const pendingData = jsonData.data.filter(r => !sentData[`${r.accountnumber}|${r.Countyname || ""}`]);
       if (pendingData.length === 0) throw new Error("All records have already been sent to Tuan! No pending records found.");
 
-      // Step 3: Download Excel blob from server (server builds the styled xlsx)
+      // Step 3: Download Excel using xlsx-js-style (colored)
       setStatus("Downloading Excel...");
-      const excelRes = await fetch(`${API_BASE}/export-all?${p}`, { headers: NGROK_HEADERS });
-      if (!excelRes.ok) throw new Error("Excel download failed");
-      const blob = await excelRes.blob();
+      const ok = downloadColoredXLSX(pendingData, county, true);
+      if (!ok) throw new Error("Excel library not ready. Wait 3 seconds and try again.");
 
-      // 👉 Trigger file download
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = fileName;
-      a.click();
-      window.URL.revokeObjectURL(blobUrl);
-
-      // 👉 Convert blob to base64 for email attachment
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onload  = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-      });
-
-      // Step 4: POST to FastAPI → open Outlook draft with xlsx attached
+      // Step 4: Open Outlook via mailto (Excel manual attach பண்ணிக்கோங்க)
       setStatus("Opening Outlook...");
-      const apiRes  = await fetch(`${API_BASE}/send-outlook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...NGROK_HEADERS },
-        body: JSON.stringify({
-          to:                toEmail,
-          cc:                KAVYA_CC,
-          subject:           subject,
-          body:              bodyText,
-          file_name:         fileName,
-          file_b64:          base64,
-          exchange_email:    exchangeEmail,
-          exchange_password: exchangePassword,
-        }),
-      });
-      const apiData = await apiRes.json();
-      if (!apiData.ok) throw new Error(apiData.error || "Outlook failed to open");
+      const ccStr = encodeURIComponent(KAVYA_CC.join(";"));
+      setTimeout(() => {
+        window.location.href =
+          `mailto:${toEmail}?cc=${ccStr}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`;
+      }, 600);
 
       // Step 5: Mark records as sent
       setStatus("Saving sent records...");
@@ -924,7 +891,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
         body: JSON.stringify(markPayload),
       });
 
-      // ✅ Refresh sent records in parent — table updates immediately
+      // Refresh sent records in parent
       const freshRes  = await fetch(`${API_BASE}/tuan-sent/list`, { headers: NGROK_HEADERS });
       const freshData = await freshRes.json();
       if (typeof onSentUpdate === "function") onSentUpdate(freshData);
@@ -943,51 +910,42 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
         <h2 style={{ margin:"0 0 1rem", fontSize:17, fontWeight:800, color:"#1e1b4b" }}>
           📧 Send Report to Tuan
         </h2>
+
+        {/* Mail preview */}
         <div style={{ background:"#f8fafc", borderRadius:10, padding:"1rem", marginBottom:"1rem", border:"1px solid #e2e8f0", fontSize:12 }}>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>To:</strong> <span style={{ color:"#1e293b" }}>{toEmail}</span></div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>CC:</strong> <span style={{ color:"#1e293b" }}>{KAVYA_CC.join("; ")}</span></div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Subject:</strong> <span style={{ color:"#1e293b" }}>{subject}</span></div>
-          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName}</span></div>
+          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} <span style={{ color:"#f59e0b", fontWeight:700 }}>(manually attach after download)</span></span></div>
           <hr style={{ border:"none", borderTop:"1px solid #e2e8f0", margin:"8px 0" }} />
-          <div style={{ color:"#334155", lineHeight:1.6 }}>
-            Hello Tuan,<br /><br />
-            Please find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.
-          </div>
+          <div style={{ color:"#334155", lineHeight:1.6, whiteSpace:"pre-wrap" }}>{bodyText}</div>
         </div>
-        {/* Exchange Credentials */}
-        <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:10, padding:"0.85rem 1rem", marginBottom:"0.75rem" }}>
-          <p style={{ margin:"0 0 8px", fontSize:11, fontWeight:700, color:"#0369a1", textTransform:"uppercase", letterSpacing:"0.05em" }}>🔐 Exchange Login (உங்கள் Outlook password)</p>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-            <div>
-              <label style={{ fontSize:10, color:"#64748b", fontWeight:700, display:"block", marginBottom:3 }}>Email</label>
-              <input
-                type="email"
-                value={exchangeEmail}
-                onChange={e => setExchangeEmail(e.target.value)}
-                placeholder="name@poconnor.com"
-                style={{ ...iStyle, fontSize:12 }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize:10, color:"#64748b", fontWeight:700, display:"block", marginBottom:3 }}>Password</label>
-              <input
-                type="password"
-                value={exchangePassword}
-                onChange={e => setExchangePassword(e.target.value)}
-                placeholder="••••••••"
-                style={{ ...iStyle, fontSize:12 }}
-              />
-            </div>
-          </div>
+
+        {/* Info box */}
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", marginBottom:"0.75rem", fontSize:11, color:"#92400e" }}>
+          ℹ️ Excel file automatically download ஆகும். Outlook draft open ஆன பிறகு அந்த file-ஐ attach பண்ணி Send பண்ணுங்கள்.
         </div>
-        {errMsg && <div style={{ background:"#fef2f2", color:"#dc2626", borderRadius:8, padding:"8px 12px", fontSize:12, marginBottom:8, border:"1px solid #fecaca" }}>⚠️ {errMsg}</div>}
+
+        {errMsg && (
+          <div style={{ background:"#fef2f2", color:"#dc2626", borderRadius:8, padding:"8px 12px", fontSize:12, marginBottom:8, border:"1px solid #fecaca" }}>
+            ⚠️ {errMsg}
+          </div>
+        )}
+
         {sent ? (
-          <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>"✅ Outlook draft opened! Records marked as Sent. Review and click Send."</div>
+          <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>
+            ✅ Excel downloaded & Outlook draft opened! Downloaded file-ஐ attach பண்ணி Send பண்ணுங்கள்.
+          </div>
         ) : (
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={onClose} style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", fontWeight:700, fontSize:13, cursor:"pointer" }}>Cancel</button>
-            <button onClick={handleSend} disabled={sending || !exchangeEmail || !exchangePassword} style={{ flex:2, padding:"10px 0", borderRadius:10, border:"none", background: (sending || !exchangeEmail || !exchangePassword) ? "#a5b4fc" : "linear-gradient(135deg,#059669,#10b981)", color:"#fff", fontWeight:700, fontSize:13, cursor: (sending || !exchangeEmail || !exchangePassword) ? "not-allowed":"pointer" }}>
-              {sending ? ("⏳ " + (status || "Preparing...")) : "📤 Send to Tuan"}
+            <button onClick={onClose} style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+              Cancel
+            </button>
+            <button
+              onClick={handleSend}
+              disabled={sending}
+              style={{ flex:2, padding:"10px 0", borderRadius:10, border:"none", background: sending ? "#a5b4fc" : "linear-gradient(135deg,#059669,#10b981)", color:"#fff", fontWeight:700, fontSize:13, cursor: sending ? "not-allowed" : "pointer" }}>
+              {sending ? ("⏳ " + (status || "Preparing...")) : "📤 Download & Open Outlook"}
             </button>
           </div>
         )}
