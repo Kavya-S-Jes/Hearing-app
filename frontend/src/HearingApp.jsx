@@ -829,10 +829,14 @@ const handleClearSent = async () => {
 
 // ─── Tuan Mail Modal ──────────────────────────────────────────────────────────
 function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSentUpdate }) {
-  const [sending, setSending] = useState(false);
-  const [sent, setSent]       = useState(false);
-  const [errMsg, setErrMsg]   = useState("");
-  const [status, setStatus]   = useState("");
+  const [sending, setSending]             = useState(false);
+  const [sent, setSent]                   = useState(false);
+  const [errMsg, setErrMsg]               = useState("");
+  const [status, setStatus]               = useState("");
+  const [exchangeEmail, setExchangeEmail] = useState(
+    currentUser?.username ? `${currentUser.username}@poconnor.com` : ""
+  );
+  const [exchangePassword, setExchangePassword] = useState("");
 
   const todayFormatted = getTodayFormatted();
   const fileName       = `Missing_HB201_Evidence_${todayFormatted.replace(" ","")}_${county || "All"}.xlsx`;
@@ -940,8 +944,10 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
           cc:        KAVYA_CC,
           subject:   subject,
           body:      bodyText,
-          file_name: fileName,
-          file_b64:  xlsxB64,
+          file_name:         fileName,
+          file_b64:          xlsxB64,
+          exchange_email:    exchangeEmail,
+          exchange_password: exchangePassword,
         }),
       });
       const apiData = await apiRes.json();
@@ -988,13 +994,39 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
             Please find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.
           </div>
         </div>
+        {/* Exchange Credentials */}
+        <div style={{ background:"#f0f9ff", border:"1px solid #bae6fd", borderRadius:10, padding:"0.85rem 1rem", marginBottom:"0.75rem" }}>
+          <p style={{ margin:"0 0 8px", fontSize:11, fontWeight:700, color:"#0369a1", textTransform:"uppercase", letterSpacing:"0.05em" }}>🔐 Exchange Login (உங்கள் Outlook password)</p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+            <div>
+              <label style={{ fontSize:10, color:"#64748b", fontWeight:700, display:"block", marginBottom:3 }}>Email</label>
+              <input
+                type="email"
+                value={exchangeEmail}
+                onChange={e => setExchangeEmail(e.target.value)}
+                placeholder="name@poconnor.com"
+                style={{ ...iStyle, fontSize:12 }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize:10, color:"#64748b", fontWeight:700, display:"block", marginBottom:3 }}>Password</label>
+              <input
+                type="password"
+                value={exchangePassword}
+                onChange={e => setExchangePassword(e.target.value)}
+                placeholder="••••••••"
+                style={{ ...iStyle, fontSize:12 }}
+              />
+            </div>
+          </div>
+        </div>
         {errMsg && <div style={{ background:"#fef2f2", color:"#dc2626", borderRadius:8, padding:"8px 12px", fontSize:12, marginBottom:8, border:"1px solid #fecaca" }}>⚠️ {errMsg}</div>}
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>"✅ Outlook draft opened! Records marked as Sent. Review and click Send."</div>
         ) : (
           <div style={{ display:"flex", gap:8 }}>
             <button onClick={onClose} style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1.5px solid #e2e8f0", background:"#f8fafc", color:"#64748b", fontWeight:700, fontSize:13, cursor:"pointer" }}>Cancel</button>
-            <button onClick={handleSend} disabled={sending} style={{ flex:2, padding:"10px 0", borderRadius:10, border:"none", background: sending ? "#a5b4fc" : "linear-gradient(135deg,#059669,#10b981)", color:"#fff", fontWeight:700, fontSize:13, cursor: sending ? "not-allowed":"pointer" }}>
+            <button onClick={handleSend} disabled={sending || !exchangeEmail || !exchangePassword} style={{ flex:2, padding:"10px 0", borderRadius:10, border:"none", background: (sending || !exchangeEmail || !exchangePassword) ? "#a5b4fc" : "linear-gradient(135deg,#059669,#10b981)", color:"#fff", fontWeight:700, fontSize:13, cursor: (sending || !exchangeEmail || !exchangePassword) ? "not-allowed":"pointer" }}>
               {sending ? ("⏳ " + (status || "Preparing...")) : "📤 Send to Tuan"}
             </button>
           </div>
