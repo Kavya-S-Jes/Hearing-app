@@ -981,14 +981,20 @@ function MLSMailModal({ hearings, county, currentUser, onClose }) {
     a.href = url; a.download = fileName; a.click();
     URL.revokeObjectURL(url);
 
-    const ccStr = encodeURIComponent(KAVYA_CC.join(";"));
-    const body  = encodeURIComponent(
+    const body =
       `Hello Kavya,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n` +
       `⚠️  Please attach the downloaded file "${fileName}" before sending.\n\n` +
-      `Total Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}\n\nSent by: ${currentUser.username}`
-    );
+      `Total Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}\n\nSent by: ${currentUser.username}`;
+
     setTimeout(() => {
-      window.location.href = `mailto:${KAVYA_TO}?cc=${ccStr}&subject=${encodeURIComponent(subject)}&body=${body}`;
+      const to  = encodeURIComponent(KAVYA_TO);
+      const cc  = encodeURIComponent(KAVYA_CC.join(";"));
+      const sub = encodeURIComponent(subject);
+      const bod = encodeURIComponent(body);
+      window.open(
+        `https://outlook.office.com/mail/deeplink/compose?to=${to}&cc=${cc}&subject=${sub}&body=${bod}`,
+        "_blank"
+      );
       setSending(false);
       setSent(true);
     }, 800);
