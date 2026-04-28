@@ -719,7 +719,7 @@ function AdminPanel({ currentUser, users, setUsers, onClose, onSentCleared }) {
   const [clearMsg, setClearMsg]       = useState("");
   const [clearing, setClearing]       = useState(false);
 const handleClearSent = async () => {
-    if (!window.confirm("⚠️ Sent to Tuan records எல்லாம் clear ஆகும். Sure-ஆ?")) return;
+    if (!window.confirm("⚠️ All Sent to Tuan records will be cleared. Are you sure?")) return;
     setClearing(true); setClearMsg("");
     try {
       const res = await fetch(`${API_BASE}/tuan-sent/clear`, { method: "DELETE", headers: NGROK_HEADERS });
@@ -875,16 +875,9 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       const ok = downloadColoredXLSX(pendingData, county, true);
       if (!ok) throw new Error("Excel library not ready. Wait 3 seconds and try again.");
 
-      // Step 4: Open Outlook Web compose window
+      // Step 4: Open Desktop Outlook via mailto
       setStatus("Opening Outlook...");
-      const owaTo  = encodeURIComponent(toEmail);
-      const owaCc  = encodeURIComponent(KAVYA_CC.join(";"));
-      const owaSub = encodeURIComponent(subject);
-      const owaBod = encodeURIComponent(bodyText);
-      window.open(
-        `https://outlook.office.com/mail/deeplink/compose?to=${owaTo}&cc=${owaCc}&subject=${owaSub}&body=${owaBod}`,
-        "_blank"
-      );
+      window.location.href = `mailto:${toEmail}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`;
 
       // Step 5: Mark records as sent
       setStatus("Saving sent records...");
@@ -930,7 +923,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {/* Info box */}
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", marginBottom:"0.75rem", fontSize:11, color:"#92400e" }}>
-          ℹ️ Excel file automatically download ஆகும். Outlook draft open ஆன பிறகு அந்த file-ஐ attach பண்ணி Send பண்ணுங்கள்.
+          ℹ️ Excel file will be downloaded automatically. Please attach it to the Outlook draft before sending.
         </div>
 
         {errMsg && (
@@ -941,7 +934,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>
-            ✅ Excel downloaded & Outlook draft opened! Downloaded file-ஐ attach பண்ணி Send பண்ணுங்கள்.
+            ✅ Excel downloaded & Outlook draft opened! Please attach the downloaded file and click Send.
           </div>
         ) : (
           <div style={{ display:"flex", gap:8 }}>
@@ -981,23 +974,15 @@ function MLSMailModal({ hearings, county, currentUser, onClose }) {
     a.href = url; a.download = fileName; a.click();
     URL.revokeObjectURL(url);
 
-    const body =
+    const ccStr = encodeURIComponent(KAVYA_CC.join(";"));
+    const body  = encodeURIComponent(
       `Hello Kavya,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n` +
       `⚠️  Please attach the downloaded file "${fileName}" before sending.\n\n` +
-      `Total Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}\n\nSent by: ${currentUser.username}`;
-
-    setTimeout(() => {
-      const to  = encodeURIComponent(KAVYA_TO);
-      const cc  = encodeURIComponent(KAVYA_CC.join(";"));
-      const sub = encodeURIComponent(subject);
-      const bod = encodeURIComponent(body);
-      window.open(
-        `https://outlook.office.com/mail/deeplink/compose?to=${to}&cc=${cc}&subject=${sub}&body=${bod}`,
-        "_blank"
-      );
-      setSending(false);
-      setSent(true);
-    }, 800);
+      `Total Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}\n\nSent by: ${currentUser.username}`
+    );
+    window.location.href = `mailto:${KAVYA_TO}?cc=${ccStr}&subject=${encodeURIComponent(subject)}&body=${body}`;
+    setSending(false);
+    setSent(true);
   };
 
   return (
@@ -1161,7 +1146,7 @@ export default function HearingApp() {
       setHasFetched(true);
       setSelectedRows(new Set());
     } catch {
-      setError("Backend connect ஆகலை. FastAPI server running-ஆ இருக்கா check பண்ணுங்க.");
+      setError("Backend not connected. Please check if FastAPI server is running.");
     } finally { setLoading(false); }
   }, []);
 
@@ -1189,7 +1174,7 @@ export default function HearingApp() {
       setTotalPages(json.total_pages); setPage(pageNum);
       setHasFetched(true);
     } catch {
-      setError("Backend connect ஆகலை. FastAPI server running-ஆ இருக்கா check பண்ணுங்க.");
+      setError("Backend not connected. Please check if FastAPI server is running.");
     } finally { setLoading(false); }
   }, []);
 
@@ -1301,7 +1286,7 @@ export default function HearingApp() {
         alert(`✅ ${displayHearings.length.toLocaleString()} records downloaded!`);
       }
     } catch {
-      alert("Export failed. Backend check பண்ணுங்க.");
+      alert("Export failed. Please check backend connection.");
     } finally { setExporting(false); }
   };
 
