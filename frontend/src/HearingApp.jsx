@@ -948,7 +948,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {/* Info box */}
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", marginBottom:"0.75rem", fontSize:11, color:"#92400e" }}>
-          ℹ️ Excel + VBS script download ஆகும். "open_outlook_draft.vbs" file-ஐ double-click பண்ணா Outlook draft திறக்கும் — அதில் Excel attach பண்ணி Send பண்ணுங்கள்.
+          “ℹ️ The Excel file and VBS script will be downloaded. Double-click the ‘open_outlook_draft.vbs’ file to open the Outlook draft, then attach the Excel file and click Send.”
         </div>
 
         {errMsg && (
@@ -959,7 +959,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>
-            ✅ Excel + VBS downloaded! 📌 "open_outlook_draft.vbs" file-ஐ double-click பண்ணுங்கள் → Outlook திறக்கும் → Excel attach பண்ணி Send பண்ணுங்கள்.
+            “✅ Excel + VBS downloaded! 📌 Double-click the ‘open_outlook_draft.vbs’ file → Outlook will open → Attach the Excel file and click Send.”
           </div>
         ) : (
           <div style={{ display:"flex", gap:8 }}>
