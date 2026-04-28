@@ -456,7 +456,7 @@ function triggerKavyaMail(hearings, county) {
   a.href = csvUrl; a.download = fileName; a.click();
   URL.revokeObjectURL(csvUrl);
 
-  // 2. Download VBS script — double click பண்ணா Outlook திறக்கும்
+  // 2. Open Outlook Web (OWA) compose window
   const subject = `Missing HB 201 Evidence - upcoming 25 days Hearing - ORR-${getTodayFormatted()}`;
   const body    =
     `Hello Kavya,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n` +
@@ -465,22 +465,15 @@ function triggerKavyaMail(hearings, county) {
     `County        : ${county || "All Counties"}\n` +
     `Date Range    : ${getToday()} → ${getDatePlusDays(25)}`;
 
-  setTimeout(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/generate-vbs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...NGROK_HEADERS },
-        body: JSON.stringify({ to: KAVYA_TO, cc: KAVYA_CC, subject, body }),
-      });
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href = url; a.download = "open_outlook_draft.vbs"; a.click();
-      URL.revokeObjectURL(url);
-      alert("✅ Excel downloaded!\n\n📌 இப்போது 'open_outlook_draft.vbs' file-ஐ double-click பண்ணுங்கள் — Outlook draft திறக்கும். அதில் Excel-ஐ attach பண்ணி send பண்ணுங்கள்.");
-    } catch(e) {
-      alert("VBS generation failed: " + e.message);
-    }
+  setTimeout(() => {
+    const to  = encodeURIComponent(KAVYA_TO);
+    const cc  = encodeURIComponent(KAVYA_CC.join(";"));
+    const sub = encodeURIComponent(subject);
+    const bod = encodeURIComponent(body);
+    window.open(
+      `https://outlook.office.com/mail/deeplink/compose?to=${to}&cc=${cc}&subject=${sub}&body=${bod}`,
+      "_blank"
+    );
   }, 800);
 }
 
@@ -496,21 +489,14 @@ function triggerOutlookDraft(hearings, county, toEmail, recipientName) {
   URL.revokeObjectURL(url);
   const subject = `Accounts scheduled within 25 days future hearing - HB 201 evidence missing${county ? ` (${county})` : ""}`;
   const body    = `Hello ${recipientName},\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\nNote: Please attach the downloaded CSV file to this email before sending.\n\nTotal Records: ${hearings.length}\nCounty: ${county || "All Counties"}\nDate Range: ${getToday()} to ${getDatePlusDays(25)}`;
-  setTimeout(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/generate-vbs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: toEmail, cc: [], subject, body }),
-      });
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href = url; a.download = "open_outlook_draft.vbs"; a.click();
-      URL.revokeObjectURL(url);
-    } catch(e) {
-      alert("VBS generation failed: " + e.message);
-    }
+  setTimeout(() => {
+    const to  = encodeURIComponent(toEmail);
+    const sub = encodeURIComponent(subject);
+    const bod = encodeURIComponent(body);
+    window.open(
+      `https://outlook.office.com/mail/deeplink/compose?to=${to}&subject=${sub}&body=${bod}`,
+      "_blank"
+    );
   }, 800);
 }
 
@@ -889,20 +875,16 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
       const ok = downloadColoredXLSX(pendingData, county, true);
       if (!ok) throw new Error("Excel library not ready. Wait 3 seconds and try again.");
 
-      // Step 4: Download VBS script → user double-click பண்ணா Outlook திறக்கும்
+      // Step 4: Open Outlook Web compose window
       setStatus("Opening Outlook...");
-      const ccStr2 = KAVYA_CC;
-      const vbsRes = await fetch(`${API_BASE}/generate-vbs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...NGROK_HEADERS },
-        body: JSON.stringify({ to: toEmail, cc: ccStr2, subject, body: bodyText }),
-      });
-      if (!vbsRes.ok) throw new Error("VBS generation failed");
-      const vbsBlob = await vbsRes.blob();
-      const vbsUrl  = URL.createObjectURL(vbsBlob);
-      const vbsA    = document.createElement("a");
-      vbsA.href = vbsUrl; vbsA.download = "open_outlook_draft.vbs"; vbsA.click();
-      URL.revokeObjectURL(vbsUrl);
+      const owaTo  = encodeURIComponent(toEmail);
+      const owaCc  = encodeURIComponent(KAVYA_CC.join(";"));
+      const owaSub = encodeURIComponent(subject);
+      const owaBod = encodeURIComponent(bodyText);
+      window.open(
+        `https://outlook.office.com/mail/deeplink/compose?to=${owaTo}&cc=${owaCc}&subject=${owaSub}&body=${owaBod}`,
+        "_blank"
+      );
 
       // Step 5: Mark records as sent
       setStatus("Saving sent records...");
@@ -948,7 +930,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {/* Info box */}
         <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 12px", marginBottom:"0.75rem", fontSize:11, color:"#92400e" }}>
-          “ℹ️ The Excel file and VBS script will be downloaded. Double-click the ‘open_outlook_draft.vbs’ file to open the Outlook draft, then attach the Excel file and click Send.”
+          ℹ️ Excel file automatically download ஆகும். Outlook draft open ஆன பிறகு அந்த file-ஐ attach பண்ணி Send பண்ணுங்கள்.
         </div>
 
         {errMsg && (
@@ -959,7 +941,7 @@ function TuanMailModal({ hearings, county, currentUser, filters, onClose, onSent
 
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>
-            “✅ Excel + VBS downloaded! 📌 Double-click the ‘open_outlook_draft.vbs’ file → Outlook will open → Attach the Excel file and click Send.”
+            ✅ Excel downloaded & Outlook draft opened! Downloaded file-ஐ attach பண்ணி Send பண்ணுங்கள்.
           </div>
         ) : (
           <div style={{ display:"flex", gap:8 }}>
