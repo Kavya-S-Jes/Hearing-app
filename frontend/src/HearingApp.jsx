@@ -465,16 +465,7 @@ function triggerKavyaMail(hearings, county) {
     `County        : ${county || "All Counties"}\n` +
     `Date Range    : ${getToday()} → ${getDatePlusDays(25)}`;
 
-  setTimeout(() => {
-    const to  = encodeURIComponent(KAVYA_TO);
-    const cc  = encodeURIComponent(KAVYA_CC.join(";"));
-    const sub = encodeURIComponent(subject);
-    const bod = encodeURIComponent(body);
-    window.open(
-      `https://outlook.office.com/mail/deeplink/compose?to=${to}&cc=${cc}&subject=${sub}&body=${bod}`,
-      "_blank"
-    );
-  }, 800);
+  window.location.href = `mailto:${KAVYA_TO}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 // ─── Feature 1: Send to Tuan ──────────────────────────────────────────────────
@@ -489,15 +480,7 @@ function triggerOutlookDraft(hearings, county, toEmail, recipientName) {
   URL.revokeObjectURL(url);
   const subject = `Accounts scheduled within 25 days future hearing - HB 201 evidence missing${county ? ` (${county})` : ""}`;
   const body    = `Hello ${recipientName},\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\nNote: Please attach the downloaded CSV file to this email before sending.\n\nTotal Records: ${hearings.length}\nCounty: ${county || "All Counties"}\nDate Range: ${getToday()} to ${getDatePlusDays(25)}`;
-  setTimeout(() => {
-    const to  = encodeURIComponent(toEmail);
-    const sub = encodeURIComponent(subject);
-    const bod = encodeURIComponent(body);
-    window.open(
-      `https://outlook.office.com/mail/deeplink/compose?to=${to}&subject=${sub}&body=${bod}`,
-      "_blank"
-    );
-  }, 800);
+  window.location.href = `mailto:${toEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
