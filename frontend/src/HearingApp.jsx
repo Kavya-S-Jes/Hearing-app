@@ -171,7 +171,38 @@ function computeHB201Columns(row) {
   return { codedStatus, aofaStatus, hbStatus };
 }
 
+// ─── VBScript generator for Outlook auto-attach ──────────────────────────────
+function generateVBS({ toEmail, ccEmails, subject, body, csvFileName }) {
+  const cc = ccEmails.join(";");
+  // VBScript that opens Outlook, sets fields, attaches CSV from Downloads, sends
+  return `Set objOutlook = CreateObject("Outlook.Application")
+Set objMail = objOutlook.CreateItem(0)
+Dim strDesktop
+strDesktop = CreateObject("WScript.Shell").SpecialFolders("MyDocuments")
+Dim strDownloads
+strDownloads = Left(strDesktop, InStrRev(strDesktop, "\")) & "Downloads"
+Dim strFile
+strFile = strDownloads & "\" & "${csvFileName}"
 
+With objMail
+  .To = "${toEmail}"
+  .CC = "${cc}"
+  .Subject = "${subject}"
+  .Body = "${body}"
+  If Dir(strFile) <> "" Then
+    .Attachments.Add strFile
+  End If
+  .Display
+End With`;
+}
+
+function downloadVBS(vbsContent, vbsName) {
+  const blob = new Blob([vbsContent], { type: "text/vbscript" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = vbsName; a.click();
+  URL.revokeObjectURL(url);
+}
 
 function getRowColor(row, index) {
   const dateStr = row["FormalHearingDate"];
@@ -287,7 +318,7 @@ async function downloadAllExcel(filters, county, hb201Mode = false) {
 function triggerKavyaMail(hearings, county) {
   const csvFileName = `Missing_HB201_Evidence_${getTodayFormatted().replace(" ","")}_${county || "All"}.csv`;
   const subject     = `Missing HB 201 Evidence - upcoming 25 days Hearing - ORR-${getTodayFormatted()}`;
-  const body        = `Hello Kavya,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n⚠️ Please attach the downloaded file "${csvFileName}" before sending.\n\nTotal Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}`;
+  const body        = `Hello Kavya,\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.`;
 
   // 1. Download CSV
   const csv = buildCSV(hearings, true);
@@ -297,15 +328,18 @@ function triggerKavyaMail(hearings, county) {
   a.href = url; a.download = csvFileName; a.click();
   URL.revokeObjectURL(url);
 
-  // 2. Open Desktop Outlook via mailto
-  window.location.href = `mailto:${KAVYA_TO}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  // 2. Download VBS — auto-opens Outlook with attachment
+  setTimeout(() => {
+    const vbs = generateVBS({ toEmail: KAVYA_TO, ccEmails: KAVYA_CC, subject, body, csvFileName });
+    downloadVBS(vbs, `SendKavya_${getToday()}.vbs`);
+  }, 600);
 }
 
 // ─── Feature 1: Send to Tuan ──────────────────────────────────────────────────
 function triggerOutlookDraft(hearings, county, toEmail, recipientName) {
   const csvFileName = `Missing_HB201_Evidence_${getTodayFormatted().replace(" ","")}_${county || "All"}.csv`;
-  const subject     = `Missing HB 201 Evidence - upcoming 25 days Hearing - ORR-${getTodayFormatted()}${county ? ` (${county})` : ""}`;
-  const body        = `Hello ${recipientName},\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.\n\n⚠️ Please attach the downloaded file "${csvFileName}" before sending.\n\nTotal Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}`;
+  const subject     = `Missing HB 201 Evidence - upcoming 25 days Hearing - ORR-${getTodayFormatted()}${county ? \` (\${county})\` : ""}`;
+  const body        = `Hello ${recipientName},\n\nPlease find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.`;
 
   // 1. Download CSV
   const csv = buildCSV(hearings, true);
@@ -315,8 +349,11 @@ function triggerOutlookDraft(hearings, county, toEmail, recipientName) {
   a.href = url; a.download = csvFileName; a.click();
   URL.revokeObjectURL(url);
 
-  // 2. Open Desktop Outlook via mailto
-  window.location.href = `mailto:${toEmail}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  // 2. Download VBS
+  setTimeout(() => {
+    const vbs = generateVBS({ toEmail, ccEmails: KAVYA_CC, subject, body, csvFileName });
+    downloadVBS(vbs, `SendTuan_${getToday()}.vbs`);
+  }, 600);
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
@@ -572,11 +609,13 @@ function TuanMailModal({ hearings, county, currentUser, onClose }) {
     const a    = document.createElement("a");
     a.href = url; a.download = fileName; a.click();
     URL.revokeObjectURL(url);
-    // 2. Open Desktop Outlook via mailto
-    const fullBody = `${mailBody}\n\n⚠️ Please attach the downloaded file "${fileName}" before sending.\n\nTotal Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}`;
-    window.location.href = `mailto:${TUAN_EMAIL}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(fullBody)}`;
-    setSending(false);
-    setSent(true);
+    // 2. Download VBS — auto opens Outlook with CSV attached
+    setTimeout(() => {
+      const vbs = generateVBS({ toEmail: TUAN_EMAIL, ccEmails: KAVYA_CC, subject, body: mailBody, csvFileName: fileName });
+      downloadVBS(vbs, `SendTuan_${getToday()}.vbs`);
+      setSending(false);
+      setSent(true);
+    }, 600);
   };
 
   return (
@@ -591,15 +630,15 @@ function TuanMailModal({ hearings, county, currentUser, onClose }) {
             <span style={{ color:"#1e293b" }}>{KAVYA_CC.join("; ")}</span>
           </div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Subject:</strong> <span style={{ color:"#1e293b" }}>{subject}</span></div>
-          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} (manually attach after download)</span></div>
+          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} (auto-attached via .vbs)</span></div>
           <hr style={{ border:"none", borderTop:"1px solid #e2e8f0", margin:"8px 0" }} />
           <div style={{ color:"#334155", lineHeight:1.6 }}>
             Hello Tuan,<br /><br />
             Please find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.
           </div>
         </div>
-        <div style={{ background:"#fffbeb", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#92400e", marginBottom:"1rem", border:"1px solid #fde68a" }}>
-          ⚠️ CSV will be downloaded automatically. Please attach it to the Outlook draft before sending.
+        <div style={{ background:"#eff6ff", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#1e40af", marginBottom:"1rem", border:"1px solid #93c5fd" }}>
+          📋 2 files will download: <strong>CSV</strong> (data) + <strong>.vbs</strong> (script). Double-click the .vbs file — Outlook will open with CSV auto-attached and ready to send.
         </div>
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>✅ Outlook draft opened! Attach the CSV and send.</div>
@@ -637,11 +676,13 @@ function MLSMailModal({ hearings, county, currentUser, onClose }) {
     const a    = document.createElement("a");
     a.href = url; a.download = fileName; a.click();
     URL.revokeObjectURL(url);
-    // 2. Open Desktop Outlook via mailto
-    const fullBody = `${mailBody}\n\n⚠️ Please attach the downloaded file "${fileName}" before sending.\n\nTotal Records : ${hearings.length}\nCounty        : ${county || "All Counties"}\nDate Range    : ${getToday()} → ${getDatePlusDays(25)}\n\nSent by: ${currentUser.username}`;
-    window.location.href = `mailto:${KAVYA_TO}?cc=${encodeURIComponent(KAVYA_CC.join(";"))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(fullBody)}`;
-    setSending(false);
-    setSent(true);
+    // 2. Download VBS — auto opens Outlook with CSV attached
+    setTimeout(() => {
+      const vbs = generateVBS({ toEmail: KAVYA_TO, ccEmails: KAVYA_CC, subject, body: mailBody, csvFileName: fileName });
+      downloadVBS(vbs, `SendKavya_${getToday()}.vbs`);
+      setSending(false);
+      setSent(true);
+    }, 600);
   };
 
   return (
@@ -658,15 +699,16 @@ function MLSMailModal({ hearings, county, currentUser, onClose }) {
             <span style={{ color:"#1e293b" }}>{KAVYA_CC.join("; ")}</span>
           </div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Subject:</strong> <span style={{ color:"#1e293b" }}>{subject}</span></div>
-          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} (manually attach after download)</span></div>
+          <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} (auto-attached via .vbs)</span></div>
           <hr style={{ border:"none", borderTop:"1px solid #e2e8f0", margin:"8px 0" }} />
           <div style={{ color:"#334155", lineHeight:1.6 }}>
             Hello Kavya,<br /><br />
             Please find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.
           </div>
         </div>
-        <div style={{ background:"#fffbeb", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#92400e", marginBottom:"1rem", border:"1px solid #fde68a" }}>
-          ⚠️ CSV will be downloaded automatically. Please attach it to the Outlook draft before sending.
+
+        <div style={{ background:"#eff6ff", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#1e40af", marginBottom:"1rem", border:"1px solid #93c5fd" }}>
+          📋 2 files will download: <strong>CSV</strong> (data) + <strong>.vbs</strong> (script). Double-click the .vbs file — Outlook will open with CSV auto-attached and ready to send.
         </div>
 
         {sent ? (
