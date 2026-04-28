@@ -734,6 +734,42 @@ def clear_sent():
     save_sent({})
     return {"ok": True}
 
+# ── Generate Outlook VBS Script ──────────────────────────────────────────────
+from fastapi.responses import Response
+
+class VbsRequest(BaseModel):
+    to: str
+    cc: List[str]
+    subject: str
+    body: str
+
+@app.post("/generate-vbs")
+def generate_vbs(req: VbsRequest):
+    """
+    Returns a .vbs script that opens Outlook and creates a new mail draft.
+    User downloads and double-clicks — no mailto: needed.
+    """
+    cc_str      = "; ".join(req.cc)
+    # Escape double-quotes and newlines for VBS string
+    subject_vbs = req.subject.replace('"', '""')
+    body_vbs    = req.body.replace('"', '""').replace("\n", '" & vbCrLf & "')
+
+    vbs = f"""
+Set outlookApp = CreateObject("Outlook.Application")
+Set mail = outlookApp.CreateItem(0)
+mail.To = "{req.to}"
+mail.CC = "{cc_str}"
+mail.Subject = "{subject_vbs}"
+mail.Body = "{body_vbs}"
+mail.Display
+""".strip()
+
+    return Response(
+        content=vbs,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="open_outlook_draft.vbs"'}
+    )
+
 # ── Serve React frontend ──────────────────────────────────────────────────────
 DIST_DIR = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(DIST_DIR):
