@@ -592,6 +592,15 @@ function TuanMailModal({ hearings, county, currentUser, onClose }) {
           </div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Subject:</strong> <span style={{ color:"#1e293b" }}>{subject}</span></div>
           <div style={{ marginBottom:6 }}><strong style={{ color:"#64748b" }}>Attachment:</strong> <span style={{ color:"#4f46e5" }}>📎 {fileName} (manually attach after download)</span></div>
+          <hr style={{ border:"none", borderTop:"1px solid #e2e8f0", margin:"8px 0" }} />
+          <div style={{ color:"#334155", lineHeight:1.6 }}>
+            Hello Tuan,<br /><br />
+            Please find the attached list of accounts scheduled within 25 days future hearing that don't have HB 201 evidence in our record. Please review and do the needful.
+          </div>
+        </div>
+        <div style={{ background:"#fffbeb", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#92400e", marginBottom:"1rem", border:"1px solid #fde68a" }}>
+          ⚠️ CSV will be downloaded automatically. Please attach it to the Outlook draft before sending.
+        </div>
         {sent ? (
           <div style={{ textAlign:"center", padding:"12px 0", color:"#16a34a", fontWeight:700, fontSize:14 }}>✅ Outlook draft opened! Attach the CSV and send.</div>
         ) : (
